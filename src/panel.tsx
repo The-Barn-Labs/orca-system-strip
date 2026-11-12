@@ -5,6 +5,8 @@ import type { Card as CardData, Snapshot } from './protocol.ts'
 
 const snap = atom<Snapshot | null>(null)
 const failed = atom(false)
+/** Why the last Activity Monitor press did not open it; null after a success. */
+const openNote = atom<string | null>(null)
 
 const TITLE = { cpu: 'CPU', gpu: 'GPU', memory: 'Memory', battery: 'Battery' } as const
 const SHOW_KEY = { cpu: 'showCpu', gpu: 'showGpu', memory: 'showMemory', battery: 'showBattery' } as const
@@ -14,6 +16,13 @@ const REFRESH = [
   { value: '2', label: '2 seconds' },
   { value: '5', label: '5 seconds' }
 ]
+
+function openActivityMonitor(): void {
+  plugin.request('strip.openActivityMonitor').then(
+    ({ message }) => set(openNote, message === 'Opened Activity Monitor' ? null : message),
+    () => set(openNote, 'Could not reach System Strip')
+  )
+}
 
 export function setup(ctx: PanelContext): void {
   let posted = false
@@ -95,10 +104,15 @@ export default function Panel() {
     <Stack gap="md">
       <Row justify="between">
         <Heading>System Strip</Heading>
-        <Button key="activity-monitor" size="sm" variant="ghost" icon="open-external" onPress={() => plugin.request('strip.openActivityMonitor')}>
+        <Button key="activity-monitor" size="sm" variant="ghost" icon="open-external" onPress={openActivityMonitor}>
           Activity Monitor
         </Button>
       </Row>
+      {read(openNote) ? (
+        <Text muted size="xs">
+          {read(openNote)}
+        </Text>
+      ) : null}
       <Stack gap="xs">
         <Text muted size="xs">
           Your bar now

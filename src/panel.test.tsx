@@ -137,3 +137,26 @@ test('without a battery the card says so', async () => {
   assert.equal(view.find({ testId: 'battery-show' }), null)
   await clean(view)
 })
+
+test('a failed Activity Monitor open says why', async () => {
+  const host = mockHost({ requests: { 'strip.snapshot': snapshot(), 'strip.openActivityMonitor': { message: 'Could not open Activity Monitor' } } })
+  const view = await mount(panel, { host })
+  await view.press({ testId: 'activity-monitor' })
+  assert.ok(view.find({ text: 'Could not open Activity Monitor' }))
+  await clean(view)
+})
+
+test('an Activity Monitor request the worker never answers is caught and reported', async () => {
+  const host = mockHost({
+    requests: {
+      'strip.snapshot': snapshot(),
+      'strip.openActivityMonitor': () => {
+        throw hostError('timeout', 'worker is slow')
+      }
+    }
+  })
+  const view = await mount(panel, { host })
+  await view.press({ testId: 'activity-monitor' })
+  assert.ok(view.find({ text: 'Could not reach System Strip' }))
+  await clean(view)
+})
