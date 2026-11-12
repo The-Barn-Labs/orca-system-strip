@@ -14,10 +14,10 @@
   "main": "src/worker.ts",
   "contributes": {
     "statusBarItems": [
-      { "id": "cpu", "text": "CPU –", "icon": "activity", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
-      { "id": "gpu", "text": "GPU –", "icon": "gauge", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
-      { "id": "memory", "text": "Mem –", "icon": "layers", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
-      { "id": "battery", "text": "Bat –", "tooltip": "System Strip" },
+      { "id": "cpu", "text": "–", "icon": "activity", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
+      { "id": "gpu", "text": "–", "icon": "gauge", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
+      { "id": "memory", "text": "–", "icon": "layers", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
+      { "id": "battery", "text": "–", "icon": "zap", "tooltip": "System Strip" },
       { "id": "clock", "text": "--:--", "tooltip": "System Strip" }
     ],
     "commands": [
@@ -29,6 +29,10 @@
       { "key": "showMemory", "title": "Show memory", "type": "boolean", "default": true },
       { "key": "showBattery", "title": "Show battery", "description": "Hidden anyway on a Mac without a battery.", "type": "boolean", "default": true },
       { "key": "showClock", "title": "Show clock", "type": "boolean", "default": true },
+      { "key": "cpuStyle", "title": "CPU style", "type": "string", "enum": ["words", "number", "bar", "trend", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Trend and number", "Level and number"], "default": "number" },
+      { "key": "gpuStyle", "title": "GPU style", "type": "string", "enum": ["words", "number", "bar", "trend", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Trend and number", "Level and number"], "default": "number" },
+      { "key": "memoryStyle", "title": "Memory style", "type": "string", "enum": ["words", "number", "bar", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Level and number"], "default": "number" },
+      { "key": "batteryStyle", "title": "Battery style", "type": "string", "enum": ["words", "number", "bar", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Level and number"], "default": "number" },
       { "key": "clock24h", "title": "24-hour clock", "description": "Off shows a 12-hour clock with AM/PM.", "type": "boolean", "default": true },
       { "key": "refreshSeconds", "title": "Refresh every", "description": "How often CPU and memory update. The GPU updates no faster than every 4 seconds.", "type": "integer", "enum": [1, 2, 5], "enumLabels": ["1 second", "2 seconds", "5 seconds"], "default": 2 }
     ]
