@@ -1,7 +1,7 @@
 // Runs under `orca plugin test .` only: it needs orca/testing, which exists inside that runner.
 import { assert, hostError, mockHost, mountWorker, test } from 'orca/testing'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { COMMAND_ID, FAILS_BEFORE_DASH, startStrip } from './strip.ts'
+import { BATTERY_MS, COMMAND_ID, FAILS_BEFORE_DASH, GPU_MIN_MS, PROCS_MS, startStrip } from './strip.ts'
 import type { Deps, Strip } from './strip.ts'
 import { ITEM_IDS, PLACEHOLDER } from './format.ts'
 import { fixture } from './fixtures/read.ts'
@@ -27,27 +27,42 @@ function baseOutputs(): Outputs {
   }
 }
 
-type Fake = Deps & { outputs: Outputs; runs: string[]; timers: { kind: 'every' | 'after'; ms: number; fn: () => void; cancelled: boolean }[]; clock: number }
+type Timer = { kind: 'every' | 'after'; ms: number; fn: () => void; cancelled: boolean }
+type Fake = Deps & {
+  outputs: Outputs
+  /** A pending answer for a command, to hold it "running". */
+  hold: Record<string, Promise<string>>
+  runs: string[]
+  timers: Timer[]
+  clock: number
+  /** Ticks added per os.cpus() call: busy and idle. */
+  cpuStep: { busy: number; idle: number }
+}
 
 function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
-  let ticks = 0
+  let busy = 0
+  let idle = 0
   const fake: Fake = {
     outputs,
+    hold: {},
     runs: [],
     timers: [],
     clock: new Date(2026, 10, 12, 14, 5, 30).getTime(),
+    cpuStep: { busy: 100, idle: 300 },
     platform,
     async run(cmd, args) {
       const key = [cmd, ...args].join(' ')
       fake.runs.push(key)
+      if (key in fake.hold) return fake.hold[key]
       const out = fake.outputs[key]
       if (out === undefined) throw new Error('no fake output for ' + key)
       if (out instanceof Error) throw out
       return out
     },
     cpus() {
-      ticks += 1
-      return [{ times: { user: 100 * ticks, nice: 0, sys: 0, idle: 300 * ticks, irq: 0 } }]
+      busy += fake.cpuStep.busy
+      idle += fake.cpuStep.idle
+      return [{ times: { user: busy, nice: 0, sys: 0, idle, irq: 0 } }]
     },
     totalmem: () => 24 * 1024 ** 3,
     now: () => fake.clock,
@@ -119,24 +134,108 @@ test('switched-off items are hidden and their commands never run', async () => {
   await worker.deactivate()
 })
 
+const fireLive = async (deps: Fake, strip: Strip) => {
+  for (const t of deps.timers.filter((t) => !t.cancelled)) t.fn()
+  await strip.settled()
+}
+
 test('turning an item back on shows it and polls again', async () => {
   const { api, last, strip, deps, worker } = await mount({ settings: { showGpu: false } })
   await api.settings.set('showGpu', true)
   await strip.settled()
   assert.equal(deps.runs.includes(IOREG), true)
   assert.deepEqual([last('gpu')!.visible, last('gpu')!.text], [true, 'GPU 15%'])
+  const gpuTimer = deps.timers.find((t) => t.kind === 'every' && t.ms === GPU_MIN_MS && !t.cancelled)
+  assert.ok(gpuTimer)
+  const runs = deps.runs.filter((r) => r === IOREG).length
+  gpuTimer.fn()
+  await strip.settled()
+  assert.equal(deps.runs.filter((r) => r === IOREG).length, runs + 1)
   await worker.deactivate()
 })
 
-test('turning an item off stops its timer', async () => {
+test('turning an item off stops its own polling and nothing else', async () => {
   const { api, last, strip, deps, worker } = await mount()
-  const gpuTimer = deps.timers.find((t) => t.kind === 'every' && t.ms === 2000 && !t.cancelled)
-  assert.ok(gpuTimer)
-  const before = deps.timers.filter((t) => !t.cancelled).length
   await api.settings.set('showGpu', false)
   await strip.settled()
   assert.equal(last('gpu')!.visible, false)
-  assert.equal(deps.timers.filter((t) => !t.cancelled).length, before - 1)
+  assert.equal(deps.timers.some((t) => !t.cancelled && t.kind === 'every' && t.ms === GPU_MIN_MS), false, 'gpu timer cancelled')
+  deps.runs.length = 0
+  await fireLive(deps, strip)
+  assert.equal(deps.runs.includes(IOREG), false)
+  assert.equal(deps.runs.includes(VM_STAT), true)
+  await worker.deactivate()
+})
+
+test('a source that is still running is not started again', async () => {
+  const { deps, strip, worker } = await mount()
+  let release: (out: string) => void = () => undefined
+  deps.hold[IOREG] = new Promise<string>((resolve) => {
+    release = resolve
+  })
+  deps.runs.length = 0
+  const first = strip.tick('gpu')
+  const second = strip.tick('gpu')
+  assert.equal(deps.runs.filter((r) => r === IOREG).length, 1)
+  release(GPU_OUT)
+  await Promise.all([first, second])
+  await worker.deactivate()
+})
+
+test('colour follows the smoothed CPU, the number the latest', async () => {
+  const { deps, last, strip, worker } = await mount()
+  deps.cpuStep = { busy: 10, idle: 90 }
+  await strip.tick('cpu')
+  await strip.tick('cpu')
+  deps.cpuStep = { busy: 95, idle: 5 }
+  await strip.tick('cpu')
+  assert.deepEqual([last('cpu')!.text, last('cpu')!.tone], ['CPU 95%', 'neutral'])
+  await worker.deactivate()
+})
+
+test('clock lines up with the minute and re-aligns on every fire', async () => {
+  const { deps, last, strip, worker } = await mount()
+  const first = deps.timers.filter((t) => !t.cancelled && t.kind === 'after')
+  assert.deepEqual(first.map((t) => t.ms), [30_000])
+  assert.equal(deps.timers.some((t) => t.ms === 60_000 && t.kind === 'every'), false)
+  deps.clock = new Date(2026, 10, 12, 14, 6, 0, 400).getTime()
+  first[0].fn()
+  await strip.settled()
+  assert.equal(last('clock')!.text, '14:06')
+  const next = deps.timers.filter((t) => !t.cancelled && t.kind === 'after')
+  assert.deepEqual(next.map((t) => t.ms), [59_600])
+  await worker.deactivate()
+})
+
+test('a stale clock is corrected by the next CPU tick (after sleep)', async () => {
+  const { deps, last, strip, worker } = await mount()
+  deps.clock = new Date(2026, 10, 12, 15, 0, 10).getTime()
+  await strip.tick('cpu')
+  assert.equal(last('clock')!.text, '15:00')
+  await worker.deactivate()
+})
+
+test('a memory dash is not undone by a ps tick', async () => {
+  const { deps, last, strip, worker } = await mount()
+  deps.outputs[VM_STAT] = new Error('vm_stat broke')
+  for (let i = 0; i < FAILS_BEFORE_DASH; i++) await strip.tick('memory')
+  assert.equal(last('memory')!.text, 'Mem –')
+  await strip.tick('procs')
+  assert.equal(last('memory')!.text, 'Mem –')
+  await worker.deactivate()
+})
+
+test('nothing runs or is sent after stop', async () => {
+  const { deps, host, strip, worker } = await mount()
+  const sent = host.callsOf('statusBar.update').length
+  strip.stop()
+  deps.runs.length = 0
+  for (const t of deps.timers) t.fn()
+  await strip.tick('gpu')
+  await strip.flush()
+  await strip.settled()
+  assert.deepEqual(deps.runs, [])
+  assert.equal(host.callsOf('statusBar.update').length, sent)
   await worker.deactivate()
 })
 
@@ -208,11 +307,34 @@ test('rate_limited waits retryAfterMs and then sends the latest state', async ()
   assert.equal(retry.length, 1)
   const refusedId = (host.calls.filter((c) => c.method === 'statusBar.update')[5].params as Update).id
   const sentBefore = host.callsOf('statusBar.update').length
-  await strip.flush()
-  const resent = (host.callsOf('statusBar.update') as Update[]).slice(sentBefore).find((u) => u.id === refusedId)
-  assert.ok(resent)
-  assert.notEqual(resent.text, PLACEHOLDER[refusedId as keyof typeof PLACEHOLDER])
+  deps.outputs[IOREG] = '"model" = "Test GPU"\n"Device Utilization %"=40'
+  await strip.tick('gpu')
+  assert.equal(host.callsOf('statusBar.update').length, sentBefore, 'nothing is sent while blocked')
+  retry[0].fn()
+  await strip.settled()
+  const resent = (host.callsOf('statusBar.update') as Update[]).slice(sentBefore)
+  const refused = resent.find((u) => u.id === refusedId)
+  assert.ok(refused)
+  assert.notEqual(refused.text, PLACEHOLDER[refusedId as keyof typeof PLACEHOLDER])
+  assert.equal(resent.find((u) => u.id === 'gpu')!.text, 'GPU 40%')
   await worker.deactivate()
+})
+
+test('rate_limited without retryAfterMs waits the default, and 0 is not a tight loop', async () => {
+  for (const [retryAfterMs, expected] of [[undefined, 2000], [0, 250]] as const) {
+    let calls = 0
+    const results = {
+      'statusBar.update': () => {
+        calls += 1
+        if (calls === 6) throw hostError('rate_limited', 'slow down', retryAfterMs)
+        return { ok: true }
+      }
+    }
+    const deps = fakeDeps()
+    const { worker } = await mount({ deps, results })
+    assert.deepEqual(deps.timers.filter((t) => t.kind === 'after' && t.ms !== 30_000).map((t) => t.ms), [expected])
+    await worker.deactivate()
+  }
 })
 
 test('memory: sysctl failure is Pressure: unknown, not a dash', async () => {
@@ -252,10 +374,11 @@ test('clock24h change redraws the clock at once', async () => {
 test('refresh setting sets the load timers', async () => {
   const { api, deps, strip, worker } = await mount({ settings: { refreshSeconds: 5 } })
   const live = () => deps.timers.filter((t) => t.kind === 'every' && !t.cancelled).map((t) => t.ms).sort((a, b) => a - b)
-  assert.deepEqual(live(), [5000, 5000, 5000, 5000, 30000])
+  assert.deepEqual(live(), [5000, 5000, 5000, PROCS_MS, BATTERY_MS])
   await api.settings.set('refreshSeconds', 1)
   await strip.settled()
-  assert.deepEqual(live(), [1000, 1000, 1000, 5000, 30000])
+  assert.deepEqual(live(), [1000, 1000, GPU_MIN_MS, PROCS_MS, BATTERY_MS])
+  assert.deepEqual([GPU_MIN_MS, PROCS_MS, BATTERY_MS], [4000, 15_000, 30_000])
   await worker.deactivate()
 })
 

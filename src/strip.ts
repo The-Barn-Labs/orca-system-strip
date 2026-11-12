@@ -50,9 +50,12 @@ export type Strip = {
 
 export const FAILS_BEFORE_DASH = 3
 export const BATTERY_MS = 30_000
-export const PROCS_MS = 5_000
+export const PROCS_MS = 15_000
 export const COMMAND_ID = 'system-strip.openActivityMonitor'
 const DEFAULT_RETRY_MS = 2_000
+const MIN_RETRY_MS = 250
+/** `ioreg` is the costliest read per tick, so the GPU never polls faster than this. */
+export const GPU_MIN_MS = 4_000
 const SOURCES: readonly Source[] = ['cpu', 'gpu', 'memory', 'battery', 'clock', 'procs']
 
 const COMMANDS = {
@@ -93,7 +96,8 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   let topCpu: TopApp[] | null = null
   let topMemory: TopApp[] | null = null
   let blockedUntil = 0
-  let flushScheduled = false
+  let cancelRetry: (() => void) | null = null
+  const busy = new Set<Source>()
   let sending: Promise<void> = Promise.resolve()
   let stopped = false
 
@@ -127,12 +131,9 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
       } catch (error: unknown) {
         const e = error as { code?: string; retryAfterMs?: number; message?: string }
         if (e?.code === 'rate_limited') {
-          const delay = e.retryAfterMs ?? DEFAULT_RETRY_MS
+          const delay = Math.max(MIN_RETRY_MS, e.retryAfterMs ?? DEFAULT_RETRY_MS)
           blockedUntil = deps.now() + delay
-          if (!flushScheduled) {
-            flushScheduled = true
-            deps.after(delay, () => void track(flush()))
-          }
+          if (!cancelRetry) cancelRetry = deps.after(delay, () => void track(flush()))
           return
         }
         orca.log(`statusBar.update ${id} failed: ${e?.message ?? String(error)}`)
@@ -148,7 +149,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
 
   function flush(): Promise<void> {
     blockedUntil = 0
-    flushScheduled = false
+    cancelRetry = null
     return send()
   }
 
@@ -188,6 +189,8 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         cpuSmooth.push(deps.now(), percent)
         cpuLast = percent
         redrawCpu()
+        // A free check that also repairs the clock after the Mac wakes from sleep.
+        if (enabled('clock')) set('clock', clockItem(new Date(deps.now()), settings.clock24h))
         return
       }
       case 'gpu': {
@@ -240,11 +243,15 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   }
 
   async function tick(source: Source): Promise<void> {
-    if (stopped || !enabled(source)) return
+    // A source still waiting on its last command is skipped, so a struggling Mac gets no pile-up.
+    if (stopped || !enabled(source) || busy.has(source)) return
+    busy.add(source)
     try {
       await readSource(source)
     } catch (error: unknown) {
       orca.log(`${source} tick failed: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      busy.delete(source)
     }
     await send()
   }
@@ -254,6 +261,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   function intervalOf(source: Exclude<Source, 'clock'>): number {
     if (source === 'battery') return BATTERY_MS
     if (source === 'procs') return PROCS_MS
+    if (source === 'gpu') return Math.max(GPU_MIN_MS, settings.refreshSeconds * 1000)
     return settings.refreshSeconds * 1000
   }
 
@@ -264,16 +272,17 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
 
   function startTimer(source: Source): void {
     cancelTimer(source)
+    if (stopped) return
     if (source !== 'clock') {
       timers.set(source, deps.every(intervalOf(source), fire(source)))
       return
     }
-    const toNextMinute = 60_000 - (deps.now() % 60_000)
+    // Re-aimed at the next minute on every fire, so drift and sleep never leave it behind.
     timers.set(
       'clock',
-      deps.after(toNextMinute, () => {
+      deps.after(60_000 - (deps.now() % 60_000), () => {
         fire('clock')()
-        if (!stopped && enabled('clock')) timers.set('clock', deps.every(60_000, fire('clock')))
+        if (!stopped && enabled('clock')) startTimer('clock')
       })
     )
   }
@@ -290,6 +299,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   }
 
   async function apply(next: Settings): Promise<void> {
+    if (stopped) return
     const before = settings
     settings = next
     const ticks: Promise<void>[] = []
@@ -350,6 +360,8 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     stop() {
       stopped = true
       for (const source of [...timers.keys()]) cancelTimer(source)
+      cancelRetry?.()
+      cancelRetry = null
       for (const d of disposables) d.dispose()
     }
   }

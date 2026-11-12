@@ -30,7 +30,7 @@
       { "key": "showBattery", "title": "Show battery", "description": "Hidden anyway on a Mac without a battery.", "type": "boolean", "default": true },
       { "key": "showClock", "title": "Show clock", "type": "boolean", "default": true },
       { "key": "clock24h", "title": "24-hour clock", "description": "Off shows a 12-hour clock with AM/PM.", "type": "boolean", "default": true },
-      { "key": "refreshSeconds", "title": "Refresh every", "description": "How often CPU, GPU and memory update.", "type": "integer", "enum": [1, 2, 5], "enumLabels": ["1 second", "2 seconds", "5 seconds"], "default": 2 }
+      { "key": "refreshSeconds", "title": "Refresh every", "description": "How often CPU and memory update. The GPU updates no faster than every 4 seconds.", "type": "integer", "enum": [1, 2, 5], "enumLabels": ["1 second", "2 seconds", "5 seconds"], "default": 2 }
     ]
   },
   "capabilities": [
