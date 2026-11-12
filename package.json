@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.ci.json",
+    "test:unit": "node --test \"src/**/*.unit.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.8"
+  }
+}
