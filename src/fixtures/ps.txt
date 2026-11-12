@@ -1,0 +1,8 @@
+  101  10.0 400000 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  102  20.0 300000 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)
+  103  20.0 300000 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)
+  104  20.0 300000 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)
+  201  90.0 500000 /usr/local/bin/claude
+  301   6.0 100000 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+    1   0.0   1000 /sbin/launchd
+abc

@@ -19,7 +19,7 @@
 - Node runs the `.ts` files in strip-only mode: import types with `import type { … }` (a plain `import { SomeType }` crashes at runtime), and use no enums, namespaces or constructor parameter properties. `verbatimModuleSyntax` + `erasableSyntaxOnly` in both tsconfigs enforce this.
 - Unit tests are `src/**/*.unit.test.ts` (import `node:test` + `node:assert/strict`). Worker tests are `src/**/*.worker.test.ts` (import `orca/testing`). `orca plugin test .` runs both; CI runs only unit tests.
 - Commands run via `execFile` with fixed args, no shell, an 8 s timeout, `env: { ...process.env, LC_ALL: 'C', LANG: 'C' }`.
-- Commits: `<type>(<area>): <what>`, description only, no attribution lines. `git add <paths>` then `git commit -m "…" -- <paths>`. Never `git add -A`. Never push (the owner pushes or asks).
+- Commits: `<type>(<area>): <what>`.
 - Fixtures are committed to a public repo: no usernames, home paths, serial numbers or hostnames. The `ps` fixture is hand-written.
 - Placeholder dash is the en dash `–` (U+2013).
 
@@ -370,7 +370,7 @@ No new files unless a defect is found (then fix it in the owning module with a t
 
 - [ ] **Step 1: Full local gates** — `orca plugin test .`, `orca plugin validate .`, `npm run typecheck` all pass.
 - [ ] **Step 2: Install a clean copy** — export `git archive HEAD` into a stable folder outside the repo that is not purged by the OS (not `mktemp`), then `orca plugin install "<that folder>" --json` → read the access list (must be only plugin settings, trusted worker), then re-run with the printed `--approve` fingerprint. Expected: `orca plugin list` shows `local.system-strip 0.1.0 running`.
-- [ ] **Step 3: Look at it** — check `orca plugin logs local.system-strip` is free of errors; ask the owner to confirm the five items show in the bottom bar, the tooltips render (including the multi-line memory tooltip), and clicking CPU opens Activity Monitor. If `\n` does not render as a line break, change the join to ` · ` in `format.ts` and its tests.
+- [ ] **Step 3: Look at it** — check `orca plugin logs local.system-strip` is free of errors; confirm the five items show in the bottom bar, the tooltips render (including the multi-line memory tooltip), and clicking CPU opens Activity Monitor. If `\n` does not render as a line break, change the join to ` · ` in `format.ts` and its tests.
 - [ ] **Step 4: Settings round-trip** — `orca plugin` Settings: turn GPU off and on; change refresh to 5 s; flip 24-hour clock. Each applies without reloading.
 - [ ] **Step 5: Overhead** — read the worker's PID from the `started pid <n>` line in `orca plugin logs local.system-strip`, sample `ps -o pcpu= -p <pid>` every 10 s for 3 minutes at the 2 s and the 1 s settings. Expected: average under 1%. Record the numbers in the final report.
-- [ ] **Step 6: Leave it installed** for the owner, and report the result. Pushing to GitHub and tagging `v0.1.0` wait for the owner.
+- [ ] **Step 6: Leave it installed.** Publishing (push, `v0.1.0` tag) is a separate step.
