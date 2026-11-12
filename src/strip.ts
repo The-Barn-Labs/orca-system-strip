@@ -25,7 +25,8 @@ import { parseBattery } from './sources/battery.ts'
 import type { BatteryReading } from './sources/battery.ts'
 import { parsePs, topApps } from './sources/processes.ts'
 import type { TopApp } from './sources/processes.ts'
-import { TREND_LENGTH } from './styles.ts'
+import { ICON, STYLES, STYLE_LABEL, TREND_LENGTH, batteryIcon, dashText, num, styledText } from './styles.ts'
+import type { Card, Snapshot } from './protocol.ts'
 import type { Style, StyledId } from './styles.ts'
 
 export type Source = 'cpu' | 'gpu' | 'memory' | 'battery' | 'clock' | 'procs'
@@ -278,6 +279,69 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     }
   }
 
+  /** The item's current percent, or null while it is hidden, unread or dashed. */
+  function valueOf(id: StyledId): number | null {
+    if (!shown(id)) return null
+    if (id === 'cpu') return cpuLast
+    if (fails[id] >= FAILS_BEFORE_DASH) return null
+    if (id === 'gpu') return gpuLast?.utilization ?? null
+    if (id === 'memory') return memoryLast?.used.percent ?? null
+    return batteryLast?.present ? batteryLast.percent : null
+  }
+
+  function card(id: StyledId, hasBattery: boolean): Card {
+    const value = valueOf(id)
+    const icon = id === 'battery' && batteryLast?.present ? batteryIcon(batteryLast.onPower) : ICON[id]
+    const history = id === 'cpu' ? cpuHistory : id === 'gpu' ? gpuHistory : []
+    const samples =
+      id === 'battery' && !hasBattery
+        ? []
+        : STYLES[id].map((style) => ({
+            style,
+            label: STYLE_LABEL[style],
+            text: value === null ? dashText(id, style) : styledText(id, style, value, history),
+            icon
+          }))
+    return { id, shown: shown(id), value: value === null ? null : num(value), samples }
+  }
+
+  function snapshot(): Snapshot {
+    const hasBattery = batteryLast?.present !== false
+    const now = new Date(deps.now())
+    return {
+      settings,
+      bar: ITEM_IDS.filter((id) => latest[id].visible).map((id) => {
+        const { text, icon, tone } = latest[id]
+        return icon ? { id, text, icon, tone } : { id, text, tone }
+      }),
+      cards: (Object.keys(STYLE_KEY) as StyledId[]).map((id) => card(id, hasBattery)),
+      clock: { h24: clockItem(now, true).text, h12: clockItem(now, false).text },
+      hasBattery
+    }
+  }
+
+  let lastPosted = ''
+
+  /** Independent of status bar sends, so a rate-limited bar never freezes an open panel. */
+  function post(): void {
+    if (stopped) return
+    const snap = snapshot()
+    const json = JSON.stringify(snap)
+    if (json === lastPosted) return
+    lastPosted = json
+    orca.panels.post('strip.snapshot', snap)
+  }
+
+  async function openActivityMonitor(): Promise<string> {
+    if (!mac) return 'Activity Monitor is macOS-only'
+    try {
+      await deps.run('open', ['-a', 'Activity Monitor'])
+      return 'Opened Activity Monitor'
+    } catch {
+      return 'Could not open Activity Monitor'
+    }
+  }
+
   async function tick(source: Source): Promise<void> {
     // A source still waiting on its last command is skipped, so a struggling Mac gets no pile-up.
     if (stopped || !enabled(source) || busy.has(source)) return
@@ -289,6 +353,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     } finally {
       busy.delete(source)
     }
+    post()
     await send()
   }
 
@@ -364,6 +429,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     }
     for (const id of ITEM_IDS) latest[id] = { ...latest[id], visible: latest[id].visible && shown(id) }
     if (before.clock24h !== next.clock24h) ticks.push(tick('clock'))
+    post()
     ticks.push(send())
     await Promise.all(ticks)
   }
@@ -376,15 +442,9 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         })()
       )
     }),
-    orca.commands.register(COMMAND_ID, async () => {
-      if (!mac) return 'Activity Monitor is macOS-only'
-      try {
-        await deps.run('open', ['-a', 'Activity Monitor'])
-        return 'Opened Activity Monitor'
-      } catch {
-        return 'Could not open Activity Monitor'
-      }
-    })
+    orca.commands.register(COMMAND_ID, openActivityMonitor),
+    orca.panels.handle('strip.snapshot', () => snapshot()),
+    orca.panels.handle('strip.openActivityMonitor', async () => ({ message: await openActivityMonitor() }))
   ]
 
   for (const id of ITEM_IDS) latest[id] = placeholder(id)

@@ -5,6 +5,8 @@ import { BATTERY_MS, COMMAND_ID, FAILS_BEFORE_DASH, GPU_MIN_MS, PROCS_MS, startS
 import type { Deps, Strip } from './strip.ts'
 import { ITEM_IDS, placeholderItem } from './format.ts'
 import { fixture } from './fixtures/read.ts'
+import type { Snapshot } from './protocol.ts'
+import { STYLES } from './styles.ts'
 
 const IOREG = 'ioreg -r -d 1 -c IOAccelerator'
 const VM_STAT = 'vm_stat'
@@ -473,5 +475,73 @@ test('battery icon switches between plug and zap with power', async () => {
   deps.outputs[PMSET] = fixture('pmset-charging.txt')
   await strip.tick('battery')
   assert.equal(last('battery')!.icon, 'plug')
+  await worker.deactivate()
+})
+
+const snapshotOf = async (worker: { request(name: 'strip.snapshot'): Promise<unknown> }) => (await worker.request('strip.snapshot')) as Snapshot
+const card = (snap: Snapshot, id: string) => snap.cards.find((c) => c.id === id)!
+
+test('snapshot has a card per item with a sample per offered style', async () => {
+  const { strip, worker } = await mount({ settings: { cpuStyle: 'bar' } })
+  await strip.tick('cpu')
+  const snap = await snapshotOf(worker)
+  assert.deepEqual(snap.cards.map((c) => c.id), ['cpu', 'gpu', 'memory', 'battery'])
+  assert.deepEqual(card(snap, 'cpu').samples.map((s) => s.style), STYLES.cpu)
+  assert.equal(card(snap, 'memory').samples.some((s) => s.style === 'trend'), false)
+  assert.equal(card(snap, 'cpu').value, '25%')
+  assert.deepEqual(card(snap, 'cpu').samples.find((s) => s.style === 'bar'), { style: 'bar', label: 'Bar', text: '▰▱▱▱▱', icon: 'activity' })
+  assert.equal(snap.settings.cpuStyle, 'bar')
+  assert.equal(snap.bar.find((b) => b.id === 'cpu')!.text, '▰▱▱▱▱')
+  assert.equal(snap.clock.h24, '14:05')
+  assert.equal(snap.clock.h12, '2:05 PM')
+  assert.equal(snap.hasBattery, true)
+  await worker.deactivate()
+})
+
+test('a hidden item has value null and dash samples, and is not polled for the panel', async () => {
+  const { deps, worker } = await mount({ settings: { showGpu: false } })
+  const snap = await snapshotOf(worker)
+  const gpu = card(snap, 'gpu')
+  assert.deepEqual([gpu.shown, gpu.value], [false, null])
+  assert.deepEqual(gpu.samples.map((s) => s.text), ['GPU –', '–', '–', '–', '–'])
+  assert.equal(snap.bar.some((b) => b.id === 'gpu'), false)
+  assert.equal(deps.runs.includes(IOREG), false)
+  await worker.deactivate()
+})
+
+test('a tick that changes something posts a fresh snapshot, an unchanged one does not', async () => {
+  const { strip, worker } = await mount()
+  await strip.tick('cpu')
+  const posts = worker.posts.filter((p) => p.event === 'strip.snapshot')
+  assert.ok(posts.length > 0)
+  assert.equal(card(posts.at(-1)!.payload as Snapshot, 'cpu').value, '25%')
+  const count = posts.length
+  await strip.tick('battery')
+  assert.equal(worker.posts.filter((p) => p.event === 'strip.snapshot').length, count)
+  await worker.deactivate()
+})
+
+test('a snapshot is still posted while the status bar is rate limited', async () => {
+  const results = { 'statusBar.update': () => { throw hostError('rate_limited', 'slow down', 1500) } }
+  const { strip, worker } = await mount({ results })
+  const count = worker.posts.length
+  await strip.tick('cpu')
+  assert.ok(worker.posts.length > count)
+  await worker.deactivate()
+})
+
+test('openActivityMonitor request runs open -a "Activity Monitor"', async () => {
+  const { deps, worker } = await mount()
+  assert.deepEqual(await worker.request('strip.openActivityMonitor'), { message: 'Opened Activity Monitor' })
+  assert.equal(deps.runs.includes(OPEN), true)
+  await worker.deactivate()
+})
+
+test('no battery: hasBattery false and a battery card with no samples', async () => {
+  const deps = fakeDeps({ ...baseOutputs(), [PMSET]: fixture('pmset-desktop.txt') })
+  const { worker } = await mount({ deps })
+  const snap = await snapshotOf(worker)
+  assert.equal(snap.hasBattery, false)
+  assert.deepEqual([card(snap, 'battery').value, card(snap, 'battery').samples], [null, []])
   await worker.deactivate()
 })
