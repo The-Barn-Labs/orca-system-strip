@@ -11,5 +11,5 @@
     "erasableSyntaxOnly": true,
     "types": ["node"]
   },
-  "include": ["src/settings.ts", "src/format.ts", "src/sources", "src/fixtures/read.ts", "src/**/*.unit.test.ts"]
+  "include": ["src/settings.ts", "src/styles.ts", "src/format.ts", "src/sources", "src/fixtures/read.ts", "src/**/*.unit.test.ts"]
 }
