@@ -20,6 +20,9 @@
       { "id": "battery", "text": "–", "icon": "zap", "tooltip": "System Strip" },
       { "id": "clock", "text": "--:--", "tooltip": "System Strip" }
     ],
+    "panels": [
+      { "id": "system-strip", "title": "System Strip", "icon": "gauge", "entry": "src/panel.tsx", "ui": "components" }
+    ],
     "commands": [
       { "id": "system-strip.openActivityMonitor", "title": "System Strip: Open Activity Monitor", "when": "global" }
     ],
