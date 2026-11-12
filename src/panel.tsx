@@ -64,6 +64,7 @@ function ItemCard({ card, data }: { card: CardData; data: Snapshot }) {
               key={`${card.id}-${sample.style}`}
               size="sm"
               variant={sample.style === selected ? 'solid' : 'outline'}
+              tone={sample.style === selected ? 'accent' : undefined}
               icon={sample.icon}
               tooltip={sample.label}
               onPress={() => settings.set(STYLE_KEY[card.id], sample.style)}
@@ -117,10 +118,10 @@ export default function Panel() {
         <Stack gap="sm">
           <Switch key="clock-show" label="Show clock" checked={s.showClock} onChange={(on) => settings.set('showClock', on)} />
           <Row gap="xs">
-            <Button key="clock-24" size="sm" variant={s.clock24h ? 'solid' : 'outline'} tooltip="24-hour" onPress={() => settings.set('clock24h', true)}>
+            <Button key="clock-24" size="sm" variant={s.clock24h ? 'solid' : 'outline'} tone={s.clock24h ? 'accent' : undefined} tooltip="24-hour" onPress={() => settings.set('clock24h', true)}>
               {data.clock.h24}
             </Button>
-            <Button key="clock-12" size="sm" variant={s.clock24h ? 'outline' : 'solid'} tooltip="12-hour" onPress={() => settings.set('clock24h', false)}>
+            <Button key="clock-12" size="sm" variant={s.clock24h ? 'outline' : 'solid'} tone={s.clock24h ? undefined : 'accent'} tooltip="12-hour" onPress={() => settings.set('clock24h', false)}>
               {data.clock.h12}
             </Button>
           </Row>

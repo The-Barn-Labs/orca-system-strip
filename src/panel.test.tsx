@@ -54,6 +54,8 @@ test('shows a card per item and highlights the selected style', async () => {
   const { view } = await open()
   for (const title of ['CPU', 'GPU', 'Memory', 'Battery', 'Clock']) assert.ok(view.find({ label: title }), title)
   assert.equal(view.find({ testId: 'cpu-number' })?.props.variant, 'solid')
+  assert.equal(view.find({ testId: 'cpu-number' })?.props.tone, 'accent', 'the selected style stands out in dark mode')
+  assert.equal(view.find({ testId: 'cpu-bar' })?.props.tone, undefined)
   assert.equal(view.find({ testId: 'cpu-bar' })?.props.variant, 'outline')
   assert.equal(view.find({ testId: 'gpu-trend' })?.text, 'gpu-trend')
   assert.equal(view.find({ testId: 'memory-trend' }), null)
@@ -85,6 +87,7 @@ test('the Show switch writes showMemory', async () => {
 test('the clock samples write clock24h', async () => {
   const { host, view } = await open()
   assert.equal(view.find({ testId: 'clock-12' })?.text, '2:05 PM')
+  assert.equal(view.find({ testId: 'clock-24' })?.props.tone, 'accent')
   await view.press({ testId: 'clock-12' })
   assert.equal(host.data().settings.clock24h, false)
   await clean(view)
