@@ -10,14 +10,14 @@ An Orca plugin that shows CPU, GPU, memory, battery and a clock in Orca's bottom
 
 ## Why
 
-The owner's Mac was running hot with the fan loud, and there was no way to see from inside Orca how
+A Mac running hot with the fan loud, and there was no way to see from inside Orca how
 much CPU, GPU and memory were in use, or what was using them. Orca already shows Claude usage in its
 bottom bar; this puts the machine's vitals in the same place so a glance answers "is my Mac
 struggling, and why?"
 
 ## Goals
 
-1. Five bottom-bar items: **CPU**, **GPU**, **Memory**, **Battery**, **Clock** (owner's choice).
+1. Five bottom-bar items: **CPU**, **GPU**, **Memory**, **Battery**, **Clock** (chosen for v1).
 2. Each item can be switched on or off in Orca's Settings for the plugin.
 3. Colour warns before trouble: an item turns `warning` (yellow) when high and `danger` (red) when
    critical.
@@ -31,7 +31,7 @@ struggling, and why?"
 - Linux and Windows support beyond what falls out for free (see Platform).
 - Quitting or managing processes.
 - A sidebar panel, charts or history.
-- Network, disk or other items (Orca allows 8; the owner picked 5).
+- Network, disk or other items (Orca allows 8; v1 ships 5).
 
 ## Anti-goals (a failure even if it works)
 
@@ -67,7 +67,7 @@ struggling, and why?"
   no binaries, no obfuscated code, no tracking. Listed by GitHub topic `orca-plugin` plus a `vX.Y.Z`
   tag; each tag is permanent.
 
-## Data sources (macOS, all verified without `sudo` on the owner's M5 Pro)
+## Data sources (macOS, all verified without `sudo` on an Apple M5 Pro)
 
 | Item | Source | Notes |
 |---|---|---|
@@ -75,7 +75,7 @@ struggling, and why?"
 | GPU % | `ioreg -r -d 1 -c IOAccelerator` → `"Device Utilization %"` | One cheap spawn. Several accelerators: show the highest, list each model in the tooltip. Key missing: treat as a failed read. |
 | Memory | Page counts from one `sysctl` or one `vm_stat` call; total from `os.totalmem()` (read once); pressure from `sysctl -n kern.memorystatus_vm_pressure_level` (1 normal, 2 warn, 4 critical) | **Used % matches macOS Activity Monitor's "Memory Used"**: app memory (anonymous/internal − purgeable) + wired + compressed, over total. Not `total − free`, which reads ~95% on any Mac because of file cache. **Colour comes from the pressure level**, not the %. Combine reads into as few spawns as possible (design choice). |
 | Battery | `pmset -g batt` → percent, power source, charging state, time remaining | Every 30 s. Hidden when the Mac has no battery. |
-| Top apps | `ps -Aeo pid,pcpu,rss,comm` | For CPU and Memory tooltips. Every ~5 s, not every tick. |
+| Top apps | `ps -Aeo pid,pcpu,rss,comm` | For CPU and Memory tooltips. Every 15 s, not every tick. |
 | Clock | `Date` | Updates on the minute boundary, not on the poll tick. |
 
 All commands run through `execFile` with fixed arguments (no shell), a timeout, and a C locale.
@@ -115,7 +115,7 @@ is accepted.
 | `battery` | `Bat 87%`, `Bat 87% ⚡` on power | none | State and time, e.g. `Discharging · 19:58 left` or `On power, not charging` |
 | `clock` | `14:05` or `2:05 PM` | none | Full date |
 
-### Colours (design choice; thresholds become settings only if the owner asks)
+### Colours (design choice; thresholds could become settings later)
 
 | Item | `warning` | `danger` |
 |---|---|---|
@@ -144,12 +144,12 @@ changed. On `rate_limited` the worker waits `retryAfterMs` before sending again.
 | `showBattery` | boolean | true | Show the Battery item (still hidden if there is no battery) |
 | `showClock` | boolean | true | Show the Clock item |
 | `clock24h` | boolean | true | 24-hour clock; off means 12-hour with AM/PM |
-| `refreshSeconds` | integer, enum 1 / 2 / 5 | 2 | How often CPU, GPU and Memory refresh |
+| `refreshSeconds` | integer, enum 1 / 2 / 5 | 2 | How often CPU and Memory refresh; GPU at most every 4 s (`ioreg` is the costliest read) |
 
 A switched-off item is hidden with `visible: false`, and its data source stops being polled.
 Changes apply immediately through `settings.onDidChange` (the worker re-reads settings).
 
-### Click (design choice — the owner may strike it)
+### Click (design choice)
 
 Clicking CPU, GPU or Memory opens macOS's own Activity Monitor (`open -a "Activity Monitor"`), the
 quickest route from "it's hot" to doing something about it. One contributed command, titled
@@ -207,7 +207,7 @@ before each release.
 
 ## Shipping
 
-1. The owner installs it locally from the folder (`local.system-strip`) and uses it for a while.
+1. Install it locally from the folder (`local.system-strip`) and uses it for a while.
 2. Remove the local copy. Keep `version` in `orca-plugin.json` equal to the tag. Add the
    `orca-plugin` topic and a cover image (optional), then push tag `v0.1.0`.
 3. Check the listing status page (`orca.dev/plugins/<owner>/<repo>`, per orca.dev/plugins/add;

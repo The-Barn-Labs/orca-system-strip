@@ -33,11 +33,11 @@ read-only macOS commands:
 
 | Command | What for | How often |
 |---|---|---|
-| `ioreg -r -d 1 -c IOAccelerator` | GPU use and model | every refresh (default 2 s) |
+| `ioreg -r -d 1 -c IOAccelerator` | GPU use and model | every refresh, but no faster than every 4 s |
 | `vm_stat` | Memory in use | every refresh |
 | `sysctl -n kern.memorystatus_vm_pressure_level` | Memory pressure | every refresh |
 | `pmset -g batt` | Battery | every 30 s |
-| `ps -Aeo pid=,pcpu=,rss=,comm=` | Top apps on hover | every 5 s |
+| `ps -Aeo pid=,pcpu=,rss=,comm=` | Top apps on hover | every 15 s |
 | `open -a "Activity Monitor"` | Opening Activity Monitor | only when you click |
 
 CPU comes from Node's own `os.cpus()`, with no command. A switched-off item stops its command.
@@ -54,7 +54,7 @@ In Orca: **Settings → Plugins → System Strip**.
 |---|---|
 | Show CPU / GPU / memory / battery / clock | on (battery is hidden anyway on a Mac without one) |
 | 24-hour clock | on (off shows `2:05 PM`) |
-| Refresh every | 2 seconds (1, 2 or 5) — how often CPU, GPU and memory update |
+| Refresh every | 2 seconds (1, 2 or 5) — how often CPU and memory update; the GPU no faster than every 4 s |
 
 Changes apply immediately.
 
