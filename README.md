@@ -3,19 +3,25 @@
 CPU, GPU, memory, battery and a clock in [Orca](https://github.com/stablyai/orca)'s bottom status bar, so a
 glance tells you whether your Mac is struggling and what is behind it.
 
-```
-CPU 34%   GPU 15%   Mem 71%   Bat 87% ⚡   14:05
-```
+Each item is an icon and its value, drawn in the style you pick:
+
+| Style | CPU at 34% |
+|---|---|
+| Words and number | `CPU 34%` |
+| Icon and number (default) | `34%` |
+| Bar | `▰▰▱▱▱` (five steps of 20%, no number) |
+| Trend and number | `▂▃▇▇▅▃ 34%` (the last six readings; CPU and GPU only) |
+| Level and number | `▃34%` |
 
 ## What it shows
 
-| Item | Text | Hover | Yellow | Red |
+| Item | Icon | Hover | Yellow | Red |
 |---|---|---|---|---|
-| CPU | `CPU 34%`, the whole machine | The top 3 apps by CPU | ≥ 70% | ≥ 90% |
-| GPU | `GPU 15%` | The GPU model | ≥ 70% | ≥ 90% |
-| Memory | `Mem 71%`, counted like macOS Activity Monitor's "Memory Used" | Used of total, memory pressure, the top 3 apps by memory | pressure *warning* | pressure *critical* |
-| Battery | `Bat 87%`, with ⚡ while on power | Charging state and time left | ≤ 20% on battery | ≤ 10% on battery |
-| Clock | `14:05` or `2:05 PM` | The full date | — | — |
+| CPU, the whole machine | activity | The top 3 apps by CPU | ≥ 70% | ≥ 90% |
+| GPU | gauge | The GPU model | ≥ 70% | ≥ 90% |
+| Memory, counted like macOS Activity Monitor's "Memory Used" | layers | Used of total, memory pressure, the top 3 apps by memory | pressure *warning* | pressure *critical* |
+| Battery | a plug on power, ⚡ on battery | Charging state and time left | ≤ 20% on battery | ≤ 10% on battery |
+| Clock, `14:05` or `2:05 PM` | none | The full date | — | — |
 
 - CPU and GPU colours follow a 10-second average, so a short spike does not flash the bar.
 - Memory colour follows macOS memory pressure, which predicts slowdown better than a percentage.
@@ -23,7 +29,9 @@ CPU 34%   GPU 15%   Mem 71%   Bat 87% ⚡   14:05
 - Processes of one app are added together, so twenty Chrome helpers show up as one Chrome.
 - Clicking CPU, GPU or Memory opens macOS Activity Monitor (also in the command palette as
   **System Strip: Open Activity Monitor**).
-- If a reading keeps failing, its item shows a dash (`GPU –`) and the reason on hover.
+- If a reading keeps failing, its item shows a dash (`–`) and the reason on hover.
+- Numbers keep their width (`9%` takes the space of `34%`), so the bar does not shift as they change.
+- In Orca's compact status bar, Orca shows only the icons.
 
 ## How it runs
 
@@ -46,13 +54,18 @@ System Strip makes no network connections, collects nothing about you and stores
 Orca capability requested: `settings:own`, to read its own settings. As a trusted worker it also
 runs with your full user access, as described above.
 
-## Settings
+## Settings panel
 
-In Orca: **Settings → Plugins → System Strip**.
+Open **System Strip** from its icon in Orca's right sidebar. It has a card per item: switch it on
+or off, and pick its style from samples drawn with your live numbers. Below the cards are the
+clock format, the refresh rate and an **Activity Monitor** button.
+
+The same settings are also in **Settings → Plugins → System Strip**:
 
 | Setting | Default |
 |---|---|
 | Show CPU / GPU / memory / battery / clock | on (battery is hidden anyway on a Mac without one) |
+| CPU / GPU / memory / battery style | Icon and number |
 | 24-hour clock | on (off shows `2:05 PM`) |
 | Refresh every | 2 seconds (1, 2 or 5) — how often CPU and memory update; the GPU no faster than every 4 s |
 
@@ -76,10 +89,11 @@ or the bar shows every item twice.
 
 ```sh
 npm install
-npm run test:unit        # parsers and formatting, plain Node 22
+npm run test:unit        # parsers, styles and formatting, plain Node 22.18 or newer
 npm run typecheck
 orca plugin types .      # writes Orca's typings to .orca/types
-orca plugin test .       # every test, including the worker tests
+orca plugin test .       # every test, including the worker and panel tests
+orca plugin check .      # renders the panel in a few scenarios
 orca plugin validate .
 orca plugin dev watch .  # load this folder into Orca with live reload and logs
 ```
