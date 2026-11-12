@@ -1,0 +1,6 @@
++-o AMDRadeonX6000_AMDNavi14GraphicsAccelerator  <class AMDRadeonX6000_AMDNavi14GraphicsAccelerator, id 0x100000a1b, registered, matched, active, busy 0 (12 ms), retain 30>
+      "PerformanceStatistics" = {"Device Utilization %"=63,"GPU Activity(%)"=63}
+      "model" = "AMD Radeon Pro 5500M"
++-o IntelAccelerator  <class IntelAccelerator, id 0x100000a2c, registered, matched, active, busy 0 (3 ms), retain 22>
+      "PerformanceStatistics" = {"Device Utilization %"=12,"GPU Activity(%)"=12}
+      "model" = "Intel UHD Graphics 630"
