@@ -18,11 +18,14 @@ import type { ItemId, ItemState } from './format.ts'
 import { cpuPercent, sampleCpu } from './sources/cpu.ts'
 import type { CpuSample, CpuTimes } from './sources/cpu.ts'
 import { parseGpu } from './sources/gpu.ts'
+import type { GpuReading } from './sources/gpu.ts'
 import { memoryUsed, parsePressure, parseVmStat } from './sources/memory.ts'
 import type { Pressure } from './sources/memory.ts'
 import { parseBattery } from './sources/battery.ts'
+import type { BatteryReading } from './sources/battery.ts'
 import { parsePs, topApps } from './sources/processes.ts'
 import type { TopApp } from './sources/processes.ts'
+import { TREND_LENGTH } from './styles.ts'
 import type { Style, StyledId } from './styles.ts'
 
 export type Source = 'cpu' | 'gpu' | 'memory' | 'battery' | 'clock' | 'procs'
@@ -94,6 +97,10 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   let cpuSmooth = new Smoother(SMOOTH_MS)
   let gpuSmooth = new Smoother(SMOOTH_MS)
   let memoryLast: { used: { usedBytes: number; percent: number }; pressure: Pressure | null } | null = null
+  let gpuLast: GpuReading | null = null
+  let batteryLast: BatteryReading | null = null
+  let cpuHistory: number[] = []
+  let gpuHistory: number[] = []
   let topCpu: TopApp[] | null = null
   let topMemory: TopApp[] | null = null
   let blockedUntil = 0
@@ -170,8 +177,30 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     }
   }
 
+  const remember = (history: number[], value: number) => [...history, value].slice(-TREND_LENGTH)
+
   function redrawCpu(): void {
-    if (cpuLast !== null) set('cpu', cpuItem(cpuLast, cpuSmooth.average(), topCpu, styleOf('cpu'), []))
+    if (cpuLast !== null) set('cpu', cpuItem(cpuLast, cpuSmooth.average(), topCpu, styleOf('cpu'), cpuHistory))
+  }
+
+  function redrawGpu(): void {
+    if (gpuLast && fails.gpu < FAILS_BEFORE_DASH) set('gpu', gpuItem(gpuLast, gpuSmooth.average(), styleOf('gpu'), gpuHistory))
+  }
+
+  function redrawBattery(): void {
+    if (batteryLast && fails.battery < FAILS_BEFORE_DASH) set('battery', batteryItem(batteryLast, styleOf('battery')))
+  }
+
+  /** After a style change: the item from its last reading, or its dash or placeholder in the new style. */
+  function restyle(id: StyledId): void {
+    const dashed = id !== 'cpu' && fails[id] >= FAILS_BEFORE_DASH
+    const last = { cpu: cpuLast, gpu: gpuLast, memory: memoryLast, battery: batteryLast }[id]
+    if (dashed) set(id, dashItem(id, latest[id].tooltip, styleOf(id)))
+    else if (last === null) latest[id] = placeholder(id)
+    else if (id === 'cpu') redrawCpu()
+    else if (id === 'gpu') redrawGpu()
+    else if (id === 'memory') redrawMemory()
+    else redrawBattery()
   }
 
   function redrawMemory(): void {
@@ -191,6 +220,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         if (percent === null) return
         cpuSmooth.push(deps.now(), percent)
         cpuLast = percent
+        cpuHistory = remember(cpuHistory, percent)
         redrawCpu()
         // A free check that also repairs the clock after the Mac wakes from sleep.
         if (enabled('clock')) set('clock', clockItem(new Date(deps.now()), settings.clock24h))
@@ -202,7 +232,9 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         if (!reading) return fail('gpu', 'ioreg failed')
         fails.gpu = 0
         gpuSmooth.push(deps.now(), reading.utilization)
-        set('gpu', gpuItem(reading, gpuSmooth.average(), styleOf('gpu'), []))
+        gpuLast = reading
+        gpuHistory = remember(gpuHistory, reading.utilization)
+        redrawGpu()
         return
       }
       case 'memory': {
@@ -219,7 +251,8 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         const reading = out === null ? null : parseBattery(out)
         if (!reading) return fail('battery', 'pmset failed')
         fails.battery = 0
-        set('battery', batteryItem(reading, styleOf('battery')))
+        batteryLast = reading
+        redrawBattery()
         return
       }
       case 'clock':
@@ -296,9 +329,15 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
       cpuPrev = null
       cpuLast = null
       cpuSmooth = new Smoother(SMOOTH_MS)
+      cpuHistory = []
     }
-    if (source === 'gpu') gpuSmooth = new Smoother(SMOOTH_MS)
+    if (source === 'gpu') {
+      gpuSmooth = new Smoother(SMOOTH_MS)
+      gpuLast = null
+      gpuHistory = []
+    }
     if (source === 'memory') memoryLast = null
+    if (source === 'battery') batteryLast = null
   }
 
   async function apply(next: Settings): Promise<void> {
@@ -319,6 +358,9 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
       if (was && now && source !== 'clock' && source !== 'battery' && source !== 'procs' && before.refreshSeconds !== next.refreshSeconds) {
         startTimer(source)
       }
+    }
+    for (const id of Object.keys(STYLE_KEY) as StyledId[]) {
+      if (shown(id) && before[STYLE_KEY[id]] !== next[STYLE_KEY[id]]) restyle(id)
     }
     for (const id of ITEM_IDS) latest[id] = { ...latest[id], visible: latest[id].visible && shown(id) }
     if (before.clock24h !== next.clock24h) ticks.push(tick('clock'))

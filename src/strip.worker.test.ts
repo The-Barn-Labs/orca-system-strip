@@ -37,6 +37,7 @@ type Fake = Deps & {
   clock: number
   /** Ticks added per os.cpus() call: busy and idle. */
   cpuStep: { busy: number; idle: number }
+  cpusCalls: number
 }
 
 function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
@@ -49,6 +50,7 @@ function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
     timers: [],
     clock: new Date(2026, 10, 12, 14, 5, 30).getTime(),
     cpuStep: { busy: 100, idle: 300 },
+    cpusCalls: 0,
     platform,
     async run(cmd, args) {
       const key = [cmd, ...args].join(' ')
@@ -60,6 +62,7 @@ function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
       return out
     },
     cpus() {
+      fake.cpusCalls += 1
       busy += fake.cpuStep.busy
       idle += fake.cpuStep.idle
       return [{ times: { user: busy, nice: 0, sys: 0, idle, irq: 0 } }]
@@ -84,7 +87,7 @@ function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
   return fake
 }
 
-type Update = { id: string; text: string; tone: string; tooltip: string; visible: boolean }
+type Update = { id: string; text: string; icon?: string; tone: string; tooltip: string; visible: boolean }
 
 /** Existing tests read words text; tests of the styles set their own. */
 const WORDS = { cpuStyle: 'words', gpuStyle: 'words', memoryStyle: 'words', batteryStyle: 'words' }
@@ -402,5 +405,73 @@ test('stop cancels every timer', async () => {
   const { deps, strip, worker } = await mount()
   strip.stop()
   assert.equal(deps.timers.every((t) => t.cancelled), true)
+  await worker.deactivate()
+})
+
+const F = '\u2007'
+
+test('default style sends icon and number', async () => {
+  const { last, strip, worker } = await mount({ settings: { cpuStyle: 'number', gpuStyle: 'number' } })
+  await strip.tick('cpu')
+  assert.deepEqual([last('cpu')!.text, last('cpu')!.icon], ['25%', 'activity'])
+  assert.deepEqual([last('gpu')!.text, last('gpu')!.icon], ['15%', 'gauge'])
+  await worker.deactivate()
+})
+
+test('changing a style redraws that item at once, without a new reading', async () => {
+  const { api, deps, last, strip, worker } = await mount({ settings: { cpuStyle: 'number' } })
+  await strip.tick('cpu')
+  const calls = deps.cpusCalls
+  await api.settings.set('cpuStyle', 'bar')
+  await strip.settled()
+  assert.equal(last('cpu')!.text, '▰▱▱▱▱')
+  assert.equal(deps.cpusCalls, calls)
+  await worker.deactivate()
+})
+
+test('trend shows up to six readings and restarts empty after the item is switched off and on', async () => {
+  const { api, last, strip, worker } = await mount({ settings: { cpuStyle: 'trend' } })
+  await strip.tick('cpu')
+  assert.equal(last('cpu')!.text, F.repeat(5) + '▃ 25%')
+  for (let i = 0; i < 7; i++) await strip.tick('cpu')
+  assert.equal(last('cpu')!.text, '▃▃▃▃▃▃ 25%')
+  await api.settings.set('showCpu', false)
+  await strip.settled()
+  await api.settings.set('showCpu', true)
+  await strip.settled()
+  await strip.tick('cpu')
+  assert.equal(last('cpu')!.text, F.repeat(5) + '▃ 25%')
+  await worker.deactivate()
+})
+
+test('a style change while dashed keeps the dash in the new form', async () => {
+  const { api, deps, last, strip, worker } = await mount()
+  deps.outputs[IOREG] = new Error('boom')
+  for (let i = 0; i < FAILS_BEFORE_DASH; i++) await strip.tick('gpu')
+  assert.equal(last('gpu')!.text, 'GPU –')
+  await api.settings.set('gpuStyle', 'bar')
+  await strip.settled()
+  assert.deepEqual([last('gpu')!.text, last('gpu')!.icon, last('gpu')!.tooltip], ['–', 'gauge', 'ioreg failed'])
+  deps.outputs[IOREG] = GPU_OUT
+  await strip.tick('gpu')
+  assert.equal(last('gpu')!.text, '▰▱▱▱▱')
+  await worker.deactivate()
+})
+
+test('a style change before the first reading redraws the placeholder', async () => {
+  const { api, last, strip, worker } = await mount()
+  assert.equal(last('cpu')!.text, 'CPU –')
+  await api.settings.set('cpuStyle', 'level')
+  await strip.settled()
+  assert.deepEqual([last('cpu')!.text, last('cpu')!.icon], ['–', 'activity'])
+  await worker.deactivate()
+})
+
+test('battery icon switches between plug and zap with power', async () => {
+  const { deps, last, strip, worker } = await mount()
+  assert.equal(last('battery')!.icon, 'zap')
+  deps.outputs[PMSET] = fixture('pmset-charging.txt')
+  await strip.tick('battery')
+  assert.equal(last('battery')!.icon, 'plug')
   await worker.deactivate()
 })
