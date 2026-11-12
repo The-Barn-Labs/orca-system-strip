@@ -1,10 +1,9 @@
 import type { Disposable } from 'orca'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { readSettings } from './settings.ts'
+import { STYLE_KEY, readSettings } from './settings.ts'
 import type { Settings } from './settings.ts'
 import {
   ITEM_IDS,
-  PLACEHOLDER,
   SMOOTH_MS,
   Smoother,
   batteryItem,
@@ -12,7 +11,8 @@ import {
   cpuItem,
   dashItem,
   gpuItem,
-  memoryItem
+  memoryItem,
+  placeholderItem
 } from './format.ts'
 import type { ItemId, ItemState } from './format.ts'
 import { cpuPercent, sampleCpu } from './sources/cpu.ts'
@@ -23,6 +23,7 @@ import type { Pressure } from './sources/memory.ts'
 import { parseBattery } from './sources/battery.ts'
 import { parsePs, topApps } from './sources/processes.ts'
 import type { TopApp } from './sources/processes.ts'
+import type { Style, StyledId } from './styles.ts'
 
 export type Source = 'cpu' | 'gpu' | 'memory' | 'battery' | 'clock' | 'procs'
 
@@ -75,7 +76,7 @@ const SHOW_KEY: Record<ItemId, keyof Settings> = {
 }
 
 const same = (a: ItemState | undefined, b: ItemState) =>
-  !!a && a.text === b.text && a.tone === b.tone && a.tooltip === b.tooltip && a.visible === b.visible
+  !!a && a.text === b.text && a.icon === b.icon && a.tone === b.tone && a.tooltip === b.tooltip && a.visible === b.visible
 
 export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip> {
   const mac = deps.platform === 'darwin'
@@ -112,8 +113,10 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     return p
   }
 
+  const styleOf = (id: ItemId): Style => (id === 'clock' ? 'number' : settings[STYLE_KEY[id as StyledId]])
+
   function placeholder(id: ItemId): ItemState {
-    return { text: PLACEHOLDER[id], tone: 'neutral', tooltip: 'System Strip', visible: shown(id) }
+    return { ...placeholderItem(id, styleOf(id)), tone: 'neutral', tooltip: 'System Strip', visible: shown(id) }
   }
 
   function set(id: ItemId, state: ItemState): void {
@@ -155,7 +158,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
 
   function fail(source: 'gpu' | 'memory' | 'battery', reason: string): void {
     fails[source] += 1
-    if (fails[source] >= FAILS_BEFORE_DASH) set(source, dashItem(source, reason))
+    if (fails[source] >= FAILS_BEFORE_DASH) set(source, dashItem(source, reason, styleOf(source)))
   }
 
   async function read(command: keyof typeof COMMANDS): Promise<string | null> {
@@ -168,12 +171,12 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   }
 
   function redrawCpu(): void {
-    if (cpuLast !== null) set('cpu', cpuItem(cpuLast, cpuSmooth.average(), topCpu))
+    if (cpuLast !== null) set('cpu', cpuItem(cpuLast, cpuSmooth.average(), topCpu, styleOf('cpu'), []))
   }
 
   function redrawMemory(): void {
     if (memoryLast && fails.memory < FAILS_BEFORE_DASH) {
-      set('memory', memoryItem(memoryLast.used, deps.totalmem(), memoryLast.pressure, topMemory))
+      set('memory', memoryItem(memoryLast.used, deps.totalmem(), memoryLast.pressure, topMemory, styleOf('memory')))
     }
   }
 
@@ -199,7 +202,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         if (!reading) return fail('gpu', 'ioreg failed')
         fails.gpu = 0
         gpuSmooth.push(deps.now(), reading.utilization)
-        set('gpu', gpuItem(reading, gpuSmooth.average()))
+        set('gpu', gpuItem(reading, gpuSmooth.average(), styleOf('gpu'), []))
         return
       }
       case 'memory': {
@@ -216,7 +219,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         const reading = out === null ? null : parseBattery(out)
         if (!reading) return fail('battery', 'pmset failed')
         fails.battery = 0
-        set('battery', batteryItem(reading))
+        set('battery', batteryItem(reading, styleOf('battery')))
         return
       }
       case 'clock':

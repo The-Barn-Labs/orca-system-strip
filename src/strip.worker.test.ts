@@ -3,7 +3,7 @@ import { assert, hostError, mockHost, mountWorker, test } from 'orca/testing'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { BATTERY_MS, COMMAND_ID, FAILS_BEFORE_DASH, GPU_MIN_MS, PROCS_MS, startStrip } from './strip.ts'
 import type { Deps, Strip } from './strip.ts'
-import { ITEM_IDS, PLACEHOLDER } from './format.ts'
+import { ITEM_IDS, placeholderItem } from './format.ts'
 import { fixture } from './fixtures/read.ts'
 
 const IOREG = 'ioreg -r -d 1 -c IOAccelerator'
@@ -86,9 +86,12 @@ function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
 
 type Update = { id: string; text: string; tone: string; tooltip: string; visible: boolean }
 
-async function mount(options: { settings?: Record<string, boolean | number>; deps?: Fake; results?: Record<string, unknown> } = {}) {
+/** Existing tests read words text; tests of the styles set their own. */
+const WORDS = { cpuStyle: 'words', gpuStyle: 'words', memoryStyle: 'words', batteryStyle: 'words' }
+
+async function mount(options: { settings?: Record<string, boolean | number | string>; deps?: Fake; results?: Record<string, unknown> } = {}) {
   const deps = options.deps ?? fakeDeps()
-  const host = mockHost({ settings: options.settings ?? {}, results: options.results })
+  const host = mockHost({ settings: { ...WORDS, ...options.settings }, results: options.results })
   let api: OrcaWorkerApi | undefined
   let strip: Strip | undefined
   const worker = await mountWorker(
@@ -110,7 +113,7 @@ test('start-up sends every item with visible, even with empty settings', async (
   const { updates, worker } = await mount()
   assert.deepEqual(
     updates().slice(0, 5),
-    ITEM_IDS.map((id) => ({ id, text: PLACEHOLDER[id], tone: 'neutral', tooltip: 'System Strip', visible: true }))
+    ITEM_IDS.map((id) => ({ id, ...placeholderItem(id, 'words'), tone: 'neutral', tooltip: 'System Strip', visible: true }))
   )
   await worker.deactivate()
 })
@@ -268,7 +271,7 @@ test('a failing source keeps its value, then dashes at the third failure, others
   await strip.tick('gpu')
   assert.equal(updates().length, sent)
   await strip.tick('gpu')
-  assert.deepEqual(updates().slice(sent), [{ id: 'gpu', text: 'GPU –', tone: 'neutral', tooltip: 'ioreg failed', visible: true }])
+  assert.deepEqual(updates().slice(sent), [{ id: 'gpu', text: 'GPU –', icon: 'gauge', tone: 'neutral', tooltip: 'ioreg failed', visible: true }])
   await worker.deactivate()
 })
 
@@ -315,7 +318,7 @@ test('rate_limited waits retryAfterMs and then sends the latest state', async ()
   const resent = (host.callsOf('statusBar.update') as Update[]).slice(sentBefore)
   const refused = resent.find((u) => u.id === refusedId)
   assert.ok(refused)
-  assert.notEqual(refused.text, PLACEHOLDER[refusedId as keyof typeof PLACEHOLDER])
+  assert.notEqual(refused.text, placeholderItem(refusedId as (typeof ITEM_IDS)[number], 'words').text)
   assert.equal(resent.find((u) => u.id === 'gpu')!.text, 'GPU 40%')
   await worker.deactivate()
 })
