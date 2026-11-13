@@ -3,7 +3,7 @@
   "id": "system-strip",
   "name": "System Strip",
   "version": "0.1.0",
-  "description": "CPU, GPU, memory, battery and a clock in Orca's bottom status bar.",
+  "description": "CPU, GPU, memory, disk, network, battery and a clock in Orca's bottom status bar.",
   "license": "MIT",
   "repository": "https://github.com/The-Barn-Labs/orca-system-strip",
   "engines": {

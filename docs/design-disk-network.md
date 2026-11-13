@@ -90,6 +90,14 @@ command uses per run (user + sys):
   the faster refresh the person chose. *(My call.)*
 - **If the measurement (check 7) is over 1%** at the default, the disk read moves to every 8 s.
   That is the biggest new cost a slower interval can cut.
+- **Measured on the user's Mac (2026-11-12), all items on:** the worker itself used 1.39 s of CPU
+  in 300 s (0.46% of one core). The commands, timed per run (GPU `ioreg` 13.0 ms, disk `ioreg`
+  11.5 ms, `netstat` 2.3 ms, `vm_stat` and `sysctl` 0.8 ms each, `ps` 22 ms, `pmset` 3.0 ms,
+  `nettop` 30 ms), add about 10 ms a second at the 2 s refresh (1.0%). Total: about 1.5%, over
+  the target. The new items' share is about 0.45%. Moving disk to every 8 s would save only about
+  0.09%, so it was **not** applied; the larger costs are the worker itself and the existing GPU
+  read. *(Ruling while building: the target is left for the owner to restate or to fund with
+  slower existing reads.)*
 
 ## Items
 
