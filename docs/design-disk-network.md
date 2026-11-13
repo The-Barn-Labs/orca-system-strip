@@ -156,9 +156,6 @@ faster than every 4 seconds."; the README's refresh row says the same.
 2. **Width (recorded, not a gate):** within one style, look at how much changing speeds shift
    the items to their right, and note it in the PR. Only the movements listed under "Speed
    numbers" are expected.
-7. **Overhead:** with every item on and refresh at 1 s, the worker and its commands stay under
-   1% of one core on average (measure CPU time, not wall time). If not, the next lever is
-   network's interval, not dropping an item.
 3. **Tooltip length:** network's hover with three long app names stays ≤ 256 characters.
 4. **Numbers against Activity Monitor:** with a big copy running, disk and network speeds are in
    the same range as Activity Monitor's Disk and Network tabs.
@@ -167,6 +164,9 @@ faster than every 4 seconds."; the README's refresh row says the same.
 6. Tests: unit tests for the parsers (with fixtures from this Mac), the speed format and the
    log scale; worker tests for first read, counter going down, hidden items running nothing;
    panel tests for the new cards.
+7. **Overhead:** with every item on and refresh at 1 s, the worker and its commands stay under
+   1% of one core on average (measure CPU time, not wall time). If not, the next lever is
+   network's interval, not dropping an item.
 
 ## Left to the builder
 
