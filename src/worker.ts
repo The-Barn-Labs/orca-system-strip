@@ -1,6 +1,7 @@
-// System Strip: CPU, GPU, memory, battery and a clock in Orca's status bar.
+// System Strip: CPU, GPU, memory, disk, network, battery and a clock in Orca's status bar.
 // Orca transpiles this file when it loads: no build step.
 import { execFile } from 'node:child_process'
+import { statfs } from 'node:fs/promises'
 import os from 'node:os'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { startStrip } from './strip.ts'
@@ -20,7 +21,12 @@ export const nodeDeps: Deps = {
   },
   cpus: () => os.cpus(),
   totalmem: () => os.totalmem(),
+  async statfs(path) {
+    const s = await statfs(path)
+    return { total: s.blocks * s.bsize, available: s.bavail * s.bsize }
+  },
   now: () => Date.now(),
+  monotonic: () => performance.now(),
   every(ms, fn) {
     const timer = setInterval(fn, ms)
     return () => clearInterval(timer)
