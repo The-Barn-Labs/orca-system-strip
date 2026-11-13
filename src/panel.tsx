@@ -8,9 +8,25 @@ const failed = atom(false)
 /** Why the last Activity Monitor press did not open it; null after a success. */
 const openNote = atom<string | null>(null)
 
-const TITLE = { cpu: 'CPU', gpu: 'GPU', memory: 'Memory', battery: 'Battery' } as const
-const SHOW_KEY = { cpu: 'showCpu', gpu: 'showGpu', memory: 'showMemory', battery: 'showBattery' } as const
-const STYLE_KEY = { cpu: 'cpuStyle', gpu: 'gpuStyle', memory: 'memoryStyle', battery: 'batteryStyle' } as const
+const TITLE = { cpu: 'CPU', gpu: 'GPU', memory: 'Memory', disk: 'Disk activity', network: 'Network', space: 'Disk space', battery: 'Battery' } as const
+const SHOW_KEY = {
+  cpu: 'showCpu',
+  gpu: 'showGpu',
+  memory: 'showMemory',
+  disk: 'showDisk',
+  network: 'showNetwork',
+  space: 'showDiskSpace',
+  battery: 'showBattery'
+} as const
+const STYLE_KEY = {
+  cpu: 'cpuStyle',
+  gpu: 'gpuStyle',
+  memory: 'memoryStyle',
+  disk: 'diskStyle',
+  network: 'networkStyle',
+  space: 'diskSpaceStyle',
+  battery: 'batteryStyle'
+} as const
 const REFRESH = [
   { value: '1', label: '1 second' },
   { value: '2', label: '2 seconds' },
@@ -151,7 +167,7 @@ export default function Panel() {
           onChange={(v) => settings.set('refreshSeconds', Number(v))}
         />
         <Text muted size="xs">
-          GPU updates no faster than every 4 seconds.
+          GPU updates no faster than every 4 seconds, disk activity every 5.
         </Text>
       </Stack>
     </Stack>

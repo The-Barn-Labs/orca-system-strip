@@ -14,7 +14,7 @@ export type Snapshot = {
   settings: Settings
   /** The items shown in the bar now, in bar order. */
   bar: { id: ItemId; text: string; icon?: IconName; tone: Tone }[]
-  /** cpu, gpu, memory, battery; the battery card has no samples on a Mac without one. */
+  /** cpu, gpu, memory, disk, network, space, battery; the battery card has no samples on a Mac without one. */
   cards: Card[]
   clock: { h24: string; h12: string }
   /** True until a battery reading says there is none. */

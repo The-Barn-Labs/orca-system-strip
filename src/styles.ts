@@ -1,15 +1,19 @@
 // How an item's value is drawn in the status bar: words, number, bar, trend or level.
 
 export type Style = 'words' | 'number' | 'bar' | 'trend' | 'level'
-export type StyledId = 'cpu' | 'gpu' | 'memory' | 'battery'
+export type StyledId = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'space' | 'battery'
 export type IconName = 'activity' | 'gauge' | 'layers' | 'database' | 'globe' | 'folder' | 'plug' | 'zap'
 export type SpeedId = 'disk' | 'network'
+export type PercentId = Exclude<StyledId, SpeedId>
 
-/** Memory and battery move too slowly for a trend to say anything. */
+/** Memory, disk space and battery move too slowly for a trend to say anything. */
 export const STYLES: Record<StyledId, readonly Style[]> = {
   cpu: ['words', 'number', 'bar', 'trend', 'level'],
   gpu: ['words', 'number', 'bar', 'trend', 'level'],
   memory: ['words', 'number', 'bar', 'level'],
+  disk: ['words', 'number', 'bar', 'trend', 'level'],
+  network: ['words', 'number', 'bar', 'trend', 'level'],
+  space: ['words', 'number', 'bar', 'level'],
   battery: ['words', 'number', 'bar', 'level']
 }
 
@@ -21,9 +25,17 @@ export const STYLE_LABEL: Record<Style, string> = {
   level: 'Level and number'
 }
 
-export const LABEL: Record<StyledId, string> = { cpu: 'CPU', gpu: 'GPU', memory: 'Mem', battery: 'Bat' }
+export const LABEL: Record<StyledId, string> = { cpu: 'CPU', gpu: 'GPU', memory: 'Mem', disk: 'Disk', network: 'Net', space: 'Space', battery: 'Bat' }
 
-export const ICON: Record<StyledId, IconName> = { cpu: 'activity', gpu: 'gauge', memory: 'layers', battery: 'zap' }
+export const ICON: Record<StyledId, IconName> = {
+  cpu: 'activity',
+  gpu: 'gauge',
+  memory: 'layers',
+  disk: 'database',
+  network: 'globe',
+  space: 'folder',
+  battery: 'zap'
+}
 
 export function batteryIcon(onPower: boolean): IconName {
   return onPower ? 'plug' : 'zap'
@@ -55,7 +67,7 @@ export function trend(history: readonly number[]): string {
   return FIGURE_SPACE.repeat(TREND_LENGTH - Math.min(TREND_LENGTH, history.length)) + recent
 }
 
-export function styledText(id: StyledId, style: Style, p: number, history: readonly number[]): string {
+export function styledText(id: PercentId, style: Style, p: number, history: readonly number[]): string {
   return percentText(LABEL[id], STYLES[id].includes(style) ? style : 'number', p, history)
 }
 
@@ -75,7 +87,7 @@ export function percentText(label: string, style: Style, p: number, history: rea
   }
 }
 
-export const SPEED_LABEL: Record<SpeedId, string> = { disk: 'Disk', network: 'Net' }
+export const SPEED_LABEL: Record<SpeedId, string> = { disk: LABEL.disk, network: LABEL.network }
 
 const PUNCTUATION_SPACE = '\u2008'
 const UNITS = ['K', 'M', 'G'] as const

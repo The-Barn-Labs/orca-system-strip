@@ -93,14 +93,16 @@ command uses per run (user + sys):
 
 ## Items
 
-Listed in the manifest after memory, before battery: `cpu, gpu, memory, disk, network, diskSpace,
-battery, clock`. Orca decides where they sit.
+Listed in the manifest after memory, before battery: `cpu, gpu, memory, disk, network, space,
+battery, clock`. Orca decides where they sit. The disk-space item's id is `space`: Orca requires
+kebab-case status bar ids, and `space` matches its words label. Its settings keep the names
+`showDiskSpace` and `diskSpaceStyle`. *(Found by `orca plugin validate` while building.)*
 
 | id | Number style example | Icon | Hover | `warning` | `danger` |
 |---|---|---|---|---|---|
 | `disk` | `R 12M W 85M` | `database` | `Disk: reading 12 MB/s, writing 85 MB/s` and the totals since start-up (`5.1 TB read · 4.0 TB written`) | never | never |
 | `network` | `↓4.2M ↑310K` | `globe` | `Network: down 4.2 MB/s, up 310 KB/s` and the top 3 apps by traffic on open connections over the last 30 s | never | never |
-| `diskSpace` | `62%` | `folder` | `312 GB free of 994 GB` | ≥ 90% full | ≥ 95% full |
+| `space` | `62%` | `folder` | `312 GB free of 994 GB` | ≥ 90% full | ≥ 95% full |
 
 - **Speeds never colour the bar:** there is no "too fast", and colour stays the "something is
   wrong" signal. *(My call, shown in the mockup.)*

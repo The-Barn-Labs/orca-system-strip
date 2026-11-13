@@ -8,7 +8,7 @@ import type { StyledId } from './styles.ts'
 test('empty settings give the spec defaults', () => assert.deepEqual(readSettings({}), DEFAULTS))
 
 test('defaults are all items on, 24h clock, 2 s', () =>
-  assert.deepEqual(DEFAULTS, { showCpu: true, showGpu: true, showMemory: true, showBattery: true, showClock: true, clock24h: true, refreshSeconds: 2, cpuStyle: 'number', gpuStyle: 'number', memoryStyle: 'number', batteryStyle: 'number' }))
+  assert.deepEqual(DEFAULTS, { showCpu: true, showGpu: true, showMemory: true, showDisk: true, showNetwork: true, showDiskSpace: true, showBattery: true, showClock: true, clock24h: true, refreshSeconds: 2, cpuStyle: 'number', gpuStyle: 'number', memoryStyle: 'number', diskStyle: 'number', networkStyle: 'number', diskSpaceStyle: 'number', batteryStyle: 'number' }))
 
 test('valid values are kept', () =>
   assert.deepEqual(readSettings({ showGpu: false, clock24h: false, refreshSeconds: 5 }), { ...DEFAULTS, showGpu: false, clock24h: false, refreshSeconds: 5 }))
@@ -42,4 +42,28 @@ test('style settings in the manifest match STYLES and STYLE_LABEL', () => {
     assert.deepEqual(entry.enumLabels, STYLES[id].map((v) => STYLE_LABEL[v]))
     assert.equal(entry.default, 'number')
   }
+})
+
+test('new items: a style they do not offer keeps number; their switches read', () => {
+  const s = readSettings({ diskSpaceStyle: 'trend', networkStyle: 'bar', showDisk: false })
+  assert.deepEqual([s.diskSpaceStyle, s.networkStyle, s.showDisk], ['number', 'bar', false])
+})
+
+test('style keys follow the bar order', () =>
+  assert.deepEqual(Object.keys(STYLE_KEY), ['cpu', 'gpu', 'memory', 'disk', 'network', 'space', 'battery']))
+
+test('manifest status bar items are in the bar order with their icons', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../orca-plugin.json', import.meta.url), 'utf8'))
+  const items: { id: string; icon?: string; command?: string }[] = manifest.contributes.statusBarItems
+  assert.deepEqual(items.map((i) => [i.id, i.icon ?? null]), [
+    ['cpu', 'activity'],
+    ['gpu', 'gauge'],
+    ['memory', 'layers'],
+    ['disk', 'database'],
+    ['network', 'globe'],
+    ['space', 'folder'],
+    ['battery', 'zap'],
+    ['clock', null]
+  ])
+  for (const id of ['disk', 'network', 'space']) assert.equal(items.find((i) => i.id === id)!.command, 'system-strip.openActivityMonitor')
 })

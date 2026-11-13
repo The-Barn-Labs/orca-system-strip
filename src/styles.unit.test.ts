@@ -35,7 +35,10 @@ test('a style the item does not offer renders as number', () => assert.equal(sty
 
 test("every styled text fits Orca's 64-character limit", () => {
   for (const id of Object.keys(STYLES) as StyledId[])
-    for (const s of STYLES[id]) assert.ok(styledText(id, s, 100, Array(20).fill(100)).length <= 64)
+    for (const s of STYLES[id]) {
+      const text = id === 'disk' || id === 'network' ? pairText(id, s, 2e12, 2e12, Array(20).fill(4e12)) : styledText(id, s, 100, Array(20).fill(100))
+      assert.ok(text.length <= 64, `${id} ${s}`)
+    }
 })
 
 test('dashText', () => {
@@ -43,9 +46,17 @@ test('dashText', () => {
   assert.equal(dashText('cpu', 'bar'), '–')
 })
 
-test('only cpu and gpu offer trend', () => {
-  assert.ok(STYLES.cpu.includes('trend') && STYLES.gpu.includes('trend'))
-  assert.ok(!STYLES.memory.includes('trend') && !STYLES.battery.includes('trend'))
+test('cpu, gpu, disk and network offer trend; memory, disk space and battery do not', () => {
+  for (const id of ['cpu', 'gpu', 'disk', 'network'] as const) assert.ok(STYLES[id].includes('trend'), id)
+  for (const id of ['memory', 'space', 'battery'] as const) assert.ok(!STYLES[id].includes('trend'), id)
+})
+
+test('words labels and dashes for the new items', () => {
+  assert.equal(styledText('space', 'words', 62, []), 'Space 62%')
+  assert.equal(styledText('space', 'trend', 62, [62]), '62%')
+  assert.equal(dashText('disk', 'words'), 'Disk –')
+  assert.equal(dashText('network', 'words'), 'Net –')
+  assert.equal(dashText('network', 'number'), '–')
 })
 
 const P = ' '

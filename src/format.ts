@@ -5,11 +5,11 @@ import type { TopApp } from './sources/processes.ts'
 import { ICON, batteryIcon, dashText, pairText, percentText, styledText } from './styles.ts'
 import type { IconName, Style } from './styles.ts'
 
-export type ItemId = 'cpu' | 'gpu' | 'memory' | 'battery' | 'clock'
+export type ItemId = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'space' | 'battery' | 'clock'
 export type Tone = 'neutral' | 'warning' | 'danger'
 export type ItemState = { text: string; icon?: IconName; tone: Tone; tooltip: string; visible: boolean }
 
-export const ITEM_IDS: readonly ItemId[] = ['cpu', 'gpu', 'memory', 'battery', 'clock']
+export const ITEM_IDS: readonly ItemId[] = ['cpu', 'gpu', 'memory', 'disk', 'network', 'space', 'battery', 'clock']
 
 /** Orca's limit on hover text. */
 export const TOOLTIP_MAX = 256
@@ -156,17 +156,21 @@ export function spaceTone(percentUsed: number): Tone {
 export function diskItem(speed: { read: number; write: number }, totals: { read: number; written: number } | null, style: Style, history: readonly number[]): ItemState {
   const lines = [`Disk: reading ${rateText(speed.read)}, writing ${rateText(speed.write)}`]
   if (totals) lines.push(`Since start-up: ${decimalBytes(totals.read)} read · ${decimalBytes(totals.written)} written`)
-  return shown(pairText('disk', style, speed.read, speed.write, history), 'database', 'neutral', lines.join('\n'))
+  return shown(pairText('disk', style, speed.read, speed.write, history), ICON.disk, 'neutral', lines.join('\n'))
 }
 
 export function networkItem(speed: { down: number; up: number }, top: TopApp[] | null, style: Style, history: readonly number[]): ItemState {
   const lines = [`Network: down ${rateText(speed.down)}, up ${rateText(speed.up)}`]
   if (top && top.length) lines.push('Top apps, open connections, last 30 s: ' + top.map((a) => `${a.name} ${decimalBytes(a.value)}`).join(' · '))
-  return shown(pairText('network', style, speed.down, speed.up, history), 'globe', 'neutral', lines.join('\n'))
+  return shown(pairText('network', style, speed.down, speed.up, history), ICON.network, 'neutral', lines.join('\n'))
 }
 
+/** Percent of the volume in use: everything that is not available, as macOS counts free space. */
+export const spacePercent = (space: { total: number; available: number }) =>
+  space.total > 0 ? ((space.total - space.available) / space.total) * 100 : 0
+
 export function diskSpaceItem(space: { total: number; available: number }, style: Style): ItemState {
-  const percent = space.total > 0 ? ((space.total - space.available) / space.total) * 100 : 0
+  const percent = spacePercent(space)
   const text = percentText('Space', style === 'trend' ? 'number' : style, percent, [])
-  return shown(text, 'folder', spaceTone(percent), `${decimalBytes(space.available)} free of ${decimalBytes(space.total)}`)
+  return shown(text, ICON.space, spaceTone(percent), `${decimalBytes(space.available)} free of ${decimalBytes(space.total)}`)
 }

@@ -1,12 +1,12 @@
 // Runs under `orca plugin test .` only: it needs orca/testing, which exists inside that runner.
 import { assert, hostError, mockHost, mountWorker, test } from 'orca/testing'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { BATTERY_MS, COMMAND_ID, FAILS_BEFORE_DASH, GPU_MIN_MS, PROCS_MS, startStrip } from './strip.ts'
+import { BATTERY_MS, COMMAND_ID, DISK_MIN_MS, FAILS_BEFORE_DASH, GAP_FACTOR, GPU_MIN_MS, NETTOP_MS, PROCS_MS, SPACE_MS, startStrip } from './strip.ts'
 import type { Deps, Strip } from './strip.ts'
 import { ITEM_IDS, placeholderItem } from './format.ts'
 import { fixture } from './fixtures/read.ts'
 import type { Snapshot } from './protocol.ts'
-import { STYLES } from './styles.ts'
+import { STYLES, pairText } from './styles.ts'
 
 const IOREG = 'ioreg -r -d 1 -c IOAccelerator'
 const VM_STAT = 'vm_stat'
@@ -14,6 +14,19 @@ const PRESSURE = 'sysctl -n kern.memorystatus_vm_pressure_level'
 const PMSET = 'pmset -g batt'
 const PS = 'ps -Aeo pid=,pcpu=,rss=,comm='
 const OPEN = 'open -a Activity Monitor'
+const DISK = 'ioreg -c IOBlockStorageDriver -r -k Statistics -d 1'
+const NETSTAT = 'netstat -ibn'
+const NETTOP = 'nettop -P -L 1 -x -t external -J bytes_in,bytes_out'
+const DATA = '/System/Volumes/Data'
+
+/** One disk driver's counters as `ioreg` prints them. */
+const diskOut = (read: number, written: number) =>
+  `+-o IOBlockStorageDriver  <class IOBlockStorageDriver, id 0x10, registered>\n      "Statistics" = {"Bytes (Read)"=${read},"Bytes (Write)"=${written}}\n`
+/** `netstat -ibn` link rows: [name, bytes in, bytes out]. */
+const netOut = (...rows: [string, number, number][]) =>
+  'Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll\n' +
+  rows.map(([name, i, o]) => `${name} 1500 <Link#9> 02:00:00:00:00:01 1 0 ${i} 1 0 ${o} 0`).join('\n') +
+  '\n'
 const GPU_OUT = '"model" = "Test GPU"\n"Device Utilization %"=15'
 
 type Outputs = Record<string, string | Error>
@@ -25,7 +38,10 @@ function baseOutputs(): Outputs {
     [PRESSURE]: '1\n',
     [PMSET]: fixture('pmset-discharging.txt'),
     [PS]: fixture('ps.txt'),
-    [OPEN]: ''
+    [OPEN]: '',
+    [DISK]: diskOut(1000, 1000),
+    [NETSTAT]: netOut(['en0', 1000, 1000]),
+    [NETTOP]: ',bytes_in,bytes_out,\n'
   }
 }
 
@@ -40,6 +56,10 @@ type Fake = Deps & {
   /** Ticks added per os.cpus() call: busy and idle. */
   cpuStep: { busy: number; idle: number }
   cpusCalls: number
+  /** The monotonic clock, in ms; tests advance it. */
+  mono: number
+  space: Record<string, { total: number; available: number } | Error>
+  statfsCalls: string[]
 }
 
 function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
@@ -53,7 +73,18 @@ function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
     clock: new Date(2026, 10, 12, 14, 5, 30).getTime(),
     cpuStep: { busy: 100, idle: 300 },
     cpusCalls: 0,
+    mono: 1_000,
+    space: { [DATA]: { total: 994e9, available: 312e9 }, '/': { total: 500e9, available: 400e9 } },
+    statfsCalls: [],
     platform,
+    async statfs(path) {
+      fake.statfsCalls.push(path)
+      const out = fake.space[path]
+      if (out === undefined) throw new Error('no fake statfs for ' + path)
+      if (out instanceof Error) throw out
+      return out
+    },
+    monotonic: () => fake.mono,
     async run(cmd, args) {
       const key = [cmd, ...args].join(' ')
       fake.runs.push(key)
@@ -92,7 +123,7 @@ function fakeDeps(outputs: Outputs = baseOutputs(), platform = 'darwin'): Fake {
 type Update = { id: string; text: string; icon?: string; tone: string; tooltip: string; visible: boolean }
 
 /** Existing tests read words text; tests of the styles set their own. */
-const WORDS = { cpuStyle: 'words', gpuStyle: 'words', memoryStyle: 'words', batteryStyle: 'words' }
+const WORDS = { cpuStyle: 'words', gpuStyle: 'words', memoryStyle: 'words', diskStyle: 'words', networkStyle: 'words', diskSpaceStyle: 'words', batteryStyle: 'words' }
 
 async function mount(options: { settings?: Record<string, boolean | number | string>; deps?: Fake; results?: Record<string, unknown> } = {}) {
   const deps = options.deps ?? fakeDeps()
@@ -117,7 +148,7 @@ async function mount(options: { settings?: Record<string, boolean | number | str
 test('start-up sends every item with visible, even with empty settings', async () => {
   const { updates, worker } = await mount()
   assert.deepEqual(
-    updates().slice(0, 5),
+    updates().slice(0, ITEM_IDS.length),
     ITEM_IDS.map((id) => ({ id, ...placeholderItem(id, 'words'), tone: 'neutral', tooltip: 'System Strip', visible: true }))
   )
   await worker.deactivate()
@@ -382,11 +413,12 @@ test('clock24h change redraws the clock at once', async () => {
 test('refresh setting sets the load timers', async () => {
   const { api, deps, strip, worker } = await mount({ settings: { refreshSeconds: 5 } })
   const live = () => deps.timers.filter((t) => t.kind === 'every' && !t.cancelled).map((t) => t.ms).sort((a, b) => a - b)
-  assert.deepEqual(live(), [5000, 5000, 5000, PROCS_MS, BATTERY_MS])
+  // cpu, gpu, memory, disk, network; then procs, battery, space, nettop.
+  assert.deepEqual(live(), [5000, 5000, 5000, 5000, 5000, PROCS_MS, BATTERY_MS, SPACE_MS, NETTOP_MS])
   await api.settings.set('refreshSeconds', 1)
   await strip.settled()
-  assert.deepEqual(live(), [1000, 1000, GPU_MIN_MS, PROCS_MS, BATTERY_MS])
-  assert.deepEqual([GPU_MIN_MS, PROCS_MS, BATTERY_MS], [4000, 15_000, 30_000])
+  assert.deepEqual(live(), [1000, 1000, 1000, GPU_MIN_MS, DISK_MIN_MS, PROCS_MS, BATTERY_MS, SPACE_MS, NETTOP_MS])
+  assert.deepEqual([GPU_MIN_MS, DISK_MIN_MS, PROCS_MS, BATTERY_MS, SPACE_MS, NETTOP_MS], [4000, 5000, 15_000, 30_000, 30_000, 30_000])
   await worker.deactivate()
 })
 
@@ -485,7 +517,7 @@ test('snapshot has a card per item with a sample per offered style', async () =>
   const { strip, worker } = await mount({ settings: { cpuStyle: 'bar' } })
   await strip.tick('cpu')
   const snap = await snapshotOf(worker)
-  assert.deepEqual(snap.cards.map((c) => c.id), ['cpu', 'gpu', 'memory', 'battery'])
+  assert.deepEqual(snap.cards.map((c) => c.id), ['cpu', 'gpu', 'memory', 'disk', 'network', 'space', 'battery'])
   assert.deepEqual(card(snap, 'cpu').samples.map((s) => s.style), STYLES.cpu)
   assert.equal(card(snap, 'memory').samples.some((s) => s.style === 'trend'), false)
   assert.equal(card(snap, 'cpu').value, '25%')
@@ -543,5 +575,204 @@ test('no battery: hasBattery false and a battery card with no samples', async ()
   const snap = await snapshotOf(worker)
   assert.equal(snap.hasBattery, false)
   assert.deepEqual([card(snap, 'battery').value, card(snap, 'battery').samples], [null, []])
+  await worker.deactivate()
+})
+
+// Disk activity, network and disk space.
+
+const liveTimers = (deps: Fake) => deps.timers.filter((t) => t.kind === 'every' && !t.cancelled).map((t) => t.ms).sort((a, b) => a - b)
+
+test('disk: the first read is a baseline, the second shows both speeds', async () => {
+  const { deps, last, strip, worker } = await mount({ settings: { diskStyle: 'number' } })
+  assert.equal(last('disk')!.text, '–')
+  deps.outputs[DISK] = diskOut(1000 + 60e6, 1000 + 10e6)
+  deps.mono += 5000
+  await strip.tick('disk')
+  assert.equal(last('disk')!.text, pairText('disk', 'number', 12e6, 2e6, []))
+  assert.equal(last('disk')!.icon, 'database')
+  assert.equal(last('disk')!.tone, 'neutral')
+  await worker.deactivate()
+})
+
+test('disk: a gap or no elapsed time starts a new baseline and keeps the value', async () => {
+  const { deps, last, strip, worker } = await mount({ settings: { diskStyle: 'number' } })
+  deps.outputs[DISK] = diskOut(1000 + 60e6, 1000 + 10e6)
+  deps.mono += 5000
+  await strip.tick('disk')
+  const shown = last('disk')!.text
+  deps.outputs[DISK] = diskOut(9e12, 9e12)
+  deps.mono += GAP_FACTOR * DISK_MIN_MS + 1
+  await strip.tick('disk')
+  assert.equal(last('disk')!.text, shown, 'after a gap')
+  deps.outputs[DISK] = diskOut(9e12 + 5e6, 9e12)
+  await strip.tick('disk')
+  assert.equal(last('disk')!.text, shown, 'no time passed')
+  deps.outputs[DISK] = diskOut(9e12 + 5e6 + 5e6, 9e12)
+  deps.mono += 5000
+  await strip.tick('disk')
+  assert.equal(last('disk')!.text, pairText('disk', 'number', 1e6, 0, []))
+  await worker.deactivate()
+})
+
+test('network: a counter that went down counts as 0, others still count', async () => {
+  const { deps, last, strip, worker } = await mount({ settings: { networkStyle: 'number' } })
+  deps.outputs[NETSTAT] = netOut(['en0', 1000, 1000], ['en1', 5000, 5000])
+  deps.mono += 2000
+  await strip.tick('network')
+  deps.outputs[NETSTAT] = netOut(['en0', 1000 + 2e6, 1000 + 1e6], ['en1', 10, 10])
+  deps.mono += 2000
+  await strip.tick('network')
+  assert.equal(last('network')!.text, pairText('network', 'number', 1e6, 5e5, []))
+  assert.equal(last('network')!.tone, 'neutral')
+  await worker.deactivate()
+})
+
+test('timers at the default refresh', async () => {
+  const { deps, worker } = await mount()
+  // cpu, memory, network 2 s; gpu 4 s; disk 5 s; ps 15 s; battery, disk space, nettop 30 s.
+  assert.deepEqual(liveTimers(deps), [2000, 2000, 2000, GPU_MIN_MS, DISK_MIN_MS, PROCS_MS, BATTERY_MS, SPACE_MS, NETTOP_MS])
+  await worker.deactivate()
+})
+
+test('network hidden: neither netstat nor nettop runs; disk hidden: its ioreg never runs', async () => {
+  const { deps, strip, worker } = await mount({ settings: { showNetwork: false, showDisk: false } })
+  for (const source of ['network', 'nettop', 'disk'] as const) await strip.tick(source)
+  await fireLive(deps, strip)
+  assert.equal(deps.runs.some((r) => r === NETSTAT || r === NETTOP || r === DISK), false)
+  await worker.deactivate()
+})
+
+test('ps runs while only network needs its names, and not when nothing does', async () => {
+  const a = await mount({ settings: { showCpu: false, showMemory: false } })
+  assert.equal(a.deps.runs.includes(PS), true)
+  await a.worker.deactivate()
+  const b = await mount({ settings: { showCpu: false, showMemory: false, showNetwork: false } })
+  await b.strip.tick('procs')
+  assert.equal(b.deps.runs.includes(PS), false)
+  await b.worker.deactivate()
+})
+
+test('network hover: no apps after one nettop read, then apps named by ps', async () => {
+  const deps = fakeDeps({ ...baseOutputs(), [NETTOP]: 'Google Chrome H.101,1000,0,\n' })
+  const { last, strip, worker } = await mount({ deps })
+  deps.mono += 2000
+  await strip.tick('network')
+  assert.equal(last('network')!.tooltip.includes('Top apps'), false)
+  deps.outputs[NETTOP] = 'Google Chrome H.101,4000,0,\n'
+  await strip.tick('nettop')
+  assert.equal(last('network')!.tooltip.split('\n')[1], 'Top apps, open connections, last 30 s: Google Chrome 3.0 KB')
+  await worker.deactivate()
+})
+
+test('nettop failing three times drops the apps but never dashes Network', async () => {
+  const deps = fakeDeps({ ...baseOutputs(), [NETTOP]: 'node.101,1000,0,\n' })
+  const { last, strip, worker } = await mount({ deps })
+  deps.outputs[NETTOP] = 'node.101,4000,0,\n'
+  await strip.tick('nettop')
+  deps.mono += 2000
+  await strip.tick('network')
+  assert.equal(last('network')!.tooltip.includes('Top apps'), true)
+  deps.outputs[NETTOP] = new Error('nettop broke')
+  for (let i = 0; i < FAILS_BEFORE_DASH; i++) await strip.tick('nettop')
+  assert.equal(last('network')!.tooltip.includes('Top apps'), false)
+  assert.notEqual(last('network')!.text, 'Net –')
+  await worker.deactivate()
+})
+
+test('netstat and the disk ioreg dash after three failures', async () => {
+  const { deps, last, strip, worker } = await mount()
+  deps.outputs[NETSTAT] = new Error('netstat broke')
+  deps.outputs[DISK] = new Error('ioreg broke')
+  for (let i = 0; i < FAILS_BEFORE_DASH; i++) {
+    deps.mono += 5000
+    await strip.tick('network')
+    await strip.tick('disk')
+  }
+  assert.deepEqual([last('network')!.text, last('network')!.tooltip], ['Net –', 'netstat failed'])
+  assert.deepEqual([last('disk')!.text, last('disk')!.tooltip], ['Disk –', 'ioreg failed'])
+  await worker.deactivate()
+})
+
+test('disk switched back on starts from a new baseline with an empty trend', async () => {
+  const { api, deps, last, strip, worker } = await mount({ settings: { diskStyle: 'trend' } })
+  deps.outputs[DISK] = diskOut(1000 + 60e6, 1000 + 10e6)
+  deps.mono += 5000
+  await strip.tick('disk')
+  await api.settings.set('showDisk', false)
+  await strip.settled()
+  await api.settings.set('showDisk', true)
+  await strip.settled()
+  assert.equal(last('disk')!.text, '–')
+  deps.outputs[DISK] = diskOut(1000 + 60e6 + 5e6, 1000 + 10e6)
+  deps.mono += 5000
+  await strip.tick('disk')
+  assert.equal(last('disk')!.text, pairText('disk', 'trend', 1e6, 0, [1e6]))
+  await worker.deactivate()
+})
+
+test('disk space: percent used, warning at 90%, from the Data volume on macOS', async () => {
+  const { deps, last, strip, worker } = await mount()
+  assert.deepEqual([last('space')!.text, last('space')!.icon, last('space')!.tone], ['Space 69%', 'folder', 'neutral'])
+  assert.deepEqual(deps.statfsCalls, [DATA])
+  deps.space[DATA] = { total: 1000e9, available: 100e9 }
+  await strip.tick('space')
+  assert.equal(last('space')!.tone, 'warning')
+  await worker.deactivate()
+})
+
+test('disk space: off macOS it reads /, and disk and network never show or run', async () => {
+  const { deps, last, strip, worker } = await mount({ deps: fakeDeps(baseOutputs(), 'linux') })
+  await strip.tick('disk')
+  await strip.tick('network')
+  await strip.tick('nettop')
+  assert.deepEqual(deps.statfsCalls, ['/'])
+  assert.equal(last('space')!.text, 'Space 20%')
+  assert.deepEqual([last('disk')!.visible, last('network')!.visible], [false, false])
+  assert.deepEqual(deps.runs, [])
+  await worker.deactivate()
+})
+
+test('disk space: statfs failing three times dashes it', async () => {
+  const { deps, last, strip, worker } = await mount()
+  deps.space[DATA] = new Error('statfs broke')
+  for (let i = 0; i < FAILS_BEFORE_DASH; i++) await strip.tick('space')
+  assert.equal(last('space')!.text, 'Space –')
+  await worker.deactivate()
+})
+
+test('disk space switched on is read at once', async () => {
+  const { api, deps, last, strip, worker } = await mount({ settings: { showDiskSpace: false } })
+  assert.deepEqual(deps.statfsCalls, [])
+  await api.settings.set('showDiskSpace', true)
+  await strip.settled()
+  assert.deepEqual(deps.statfsCalls, [DATA])
+  assert.equal(last('space')!.text, 'Space 69%')
+  await worker.deactivate()
+})
+
+test('a network style change redraws from the last speeds without a new read', async () => {
+  const { api, deps, last, strip, worker } = await mount({ settings: { networkStyle: 'number' } })
+  deps.outputs[NETSTAT] = netOut(['en0', 1000 + 2e6, 1000 + 1e6])
+  deps.mono += 2000
+  await strip.tick('network')
+  const reads = deps.runs.filter((r) => r === NETSTAT).length
+  await api.settings.set('networkStyle', 'bar')
+  await strip.settled()
+  assert.equal(last('network')!.text, pairText('network', 'bar', 1e6, 5e5, []))
+  assert.equal(deps.runs.filter((r) => r === NETSTAT).length, reads)
+  await worker.deactivate()
+})
+
+test('the disk card shows the number form and a sample per style', async () => {
+  const { deps, strip, worker } = await mount()
+  deps.outputs[DISK] = diskOut(1000 + 60e6, 1000 + 10e6)
+  deps.mono += 5000
+  await strip.tick('disk')
+  const disk = card(await snapshotOf(worker), 'disk')
+  assert.equal(disk.value, pairText('disk', 'number', 12e6, 2e6, []))
+  assert.deepEqual(
+    disk.samples.map((s) => [s.style, s.text, s.icon]),
+    STYLES.disk.map((style) => [style, pairText('disk', style, 12e6, 2e6, [14e6]), 'database'])
+  )
   await worker.deactivate()
 })

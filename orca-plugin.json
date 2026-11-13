@@ -17,6 +17,9 @@
       { "id": "cpu", "text": "–", "icon": "activity", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
       { "id": "gpu", "text": "–", "icon": "gauge", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
       { "id": "memory", "text": "–", "icon": "layers", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
+      { "id": "disk", "text": "–", "icon": "database", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
+      { "id": "network", "text": "–", "icon": "globe", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
+      { "id": "space", "text": "–", "icon": "folder", "tooltip": "System Strip", "command": "system-strip.openActivityMonitor" },
       { "id": "battery", "text": "–", "icon": "zap", "tooltip": "System Strip" },
       { "id": "clock", "text": "--:--", "tooltip": "System Strip" }
     ],
@@ -30,14 +33,20 @@
       { "key": "showCpu", "title": "Show CPU", "type": "boolean", "default": true },
       { "key": "showGpu", "title": "Show GPU", "type": "boolean", "default": true },
       { "key": "showMemory", "title": "Show memory", "type": "boolean", "default": true },
+      { "key": "showDisk", "title": "Show disk activity", "type": "boolean", "default": true },
+      { "key": "showNetwork", "title": "Show network", "type": "boolean", "default": true },
+      { "key": "showDiskSpace", "title": "Show disk space", "type": "boolean", "default": true },
       { "key": "showBattery", "title": "Show battery", "description": "Hidden anyway on a Mac without a battery.", "type": "boolean", "default": true },
       { "key": "showClock", "title": "Show clock", "type": "boolean", "default": true },
       { "key": "cpuStyle", "title": "CPU style", "type": "string", "enum": ["words", "number", "bar", "trend", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Trend and number", "Level and number"], "default": "number" },
       { "key": "gpuStyle", "title": "GPU style", "type": "string", "enum": ["words", "number", "bar", "trend", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Trend and number", "Level and number"], "default": "number" },
       { "key": "memoryStyle", "title": "Memory style", "type": "string", "enum": ["words", "number", "bar", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Level and number"], "default": "number" },
+      { "key": "diskStyle", "title": "Disk activity style", "type": "string", "enum": ["words", "number", "bar", "trend", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Trend and number", "Level and number"], "default": "number" },
+      { "key": "networkStyle", "title": "Network style", "type": "string", "enum": ["words", "number", "bar", "trend", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Trend and number", "Level and number"], "default": "number" },
+      { "key": "diskSpaceStyle", "title": "Disk space style", "type": "string", "enum": ["words", "number", "bar", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Level and number"], "default": "number" },
       { "key": "batteryStyle", "title": "Battery style", "type": "string", "enum": ["words", "number", "bar", "level"], "enumLabels": ["Words and number", "Icon and number", "Bar", "Level and number"], "default": "number" },
       { "key": "clock24h", "title": "24-hour clock", "description": "Off shows a 12-hour clock with AM/PM.", "type": "boolean", "default": true },
-      { "key": "refreshSeconds", "title": "Refresh every", "description": "How often CPU and memory update. The GPU updates no faster than every 4 seconds.", "type": "integer", "enum": [1, 2, 5], "enumLabels": ["1 second", "2 seconds", "5 seconds"], "default": 2 }
+      { "key": "refreshSeconds", "title": "Refresh every", "description": "How often CPU, memory and network update. The GPU updates no faster than every 4 seconds, disk activity every 5.", "type": "integer", "enum": [1, 2, 5], "enumLabels": ["1 second", "2 seconds", "5 seconds"], "default": 2 }
     ]
   },
   "capabilities": [

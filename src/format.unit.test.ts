@@ -31,12 +31,19 @@ const pick = (s: { text: string; icon?: string }) => [s.text, s.icon]
 const onBattery = (percent: number): BatteryReading => ({ present: true, percent, onPower: false, state: 'discharging', remaining: null })
 
 test('item ids, and placeholders that match the manifest at the default style', () => {
-  assert.deepEqual(ITEM_IDS, ['cpu', 'gpu', 'memory', 'battery', 'clock'])
-  assert.deepEqual(
-    ITEM_IDS.map((id) => placeholderItem(id, 'number')),
-    [{ text: '–', icon: 'activity' }, { text: '–', icon: 'gauge' }, { text: '–', icon: 'layers' }, { text: '–', icon: 'zap' }, { text: '--:--' }]
-  )
+  assert.deepEqual(ITEM_IDS, ['cpu', 'gpu', 'memory', 'disk', 'network', 'space', 'battery', 'clock'])
+  assert.deepEqual(ITEM_IDS.map((id) => placeholderItem(id, 'number')), [
+    { text: '–', icon: 'activity' },
+    { text: '–', icon: 'gauge' },
+    { text: '–', icon: 'layers' },
+    { text: '–', icon: 'database' },
+    { text: '–', icon: 'globe' },
+    { text: '–', icon: 'folder' },
+    { text: '–', icon: 'zap' },
+    { text: '--:--' }
+  ])
   assert.equal(placeholderItem('memory', 'words').text, 'Mem –')
+  assert.equal(placeholderItem('disk', 'words').text, 'Disk –')
 })
 
 test('loadTone edges', () => assert.deepEqual([null, 69, 70, 89, 90].map(loadTone), ['neutral', 'neutral', 'warning', 'warning', 'danger']))

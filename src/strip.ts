@@ -10,9 +10,13 @@ import {
   clockItem,
   cpuItem,
   dashItem,
+  diskItem,
+  diskSpaceItem,
   gpuItem,
   memoryItem,
-  placeholderItem
+  networkItem,
+  placeholderItem,
+  spacePercent
 } from './format.ts'
 import type { ItemId, ItemState } from './format.ts'
 import { cpuPercent, sampleCpu } from './sources/cpu.ts'
@@ -23,13 +27,17 @@ import { memoryUsed, parsePressure, parseVmStat } from './sources/memory.ts'
 import type { Pressure } from './sources/memory.ts'
 import { parseBattery } from './sources/battery.ts'
 import type { BatteryReading } from './sources/battery.ts'
-import { parsePs, topApps } from './sources/processes.ts'
+import { appName, parsePs, topApps } from './sources/processes.ts'
+import { perSecond } from './sources/counters.ts'
+import type { Counters } from './sources/counters.ts'
+import { parseDiskIo } from './sources/disk.ts'
+import { parseNetstat, parseNettop, topTraffic } from './sources/network.ts'
 import type { TopApp } from './sources/processes.ts'
-import { ICON, STYLES, STYLE_LABEL, TREND_LENGTH, batteryIcon, dashText, num, styledText } from './styles.ts'
+import { ICON, STYLES, STYLE_LABEL, TREND_LENGTH, batteryIcon, dashText, pairText, styledText } from './styles.ts'
 import type { Card, Snapshot } from './protocol.ts'
 import type { Style, StyledId } from './styles.ts'
 
-export type Source = 'cpu' | 'gpu' | 'memory' | 'battery' | 'clock' | 'procs'
+export type Source = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'space' | 'battery' | 'clock' | 'procs' | 'nettop'
 
 export type Deps = {
   platform: string
@@ -37,7 +45,11 @@ export type Deps = {
   run(cmd: string, args: readonly string[]): Promise<string>
   cpus(): readonly { times: CpuTimes }[]
   totalmem(): number
+  /** Size and free space of the volume holding `path`, in bytes. */
+  statfs(path: string): Promise<{ total: number; available: number }>
   now(): number
+  /** Milliseconds on a clock that never jumps (not the wall clock). */
+  monotonic(): number
   /** Both return a function that cancels the timer. */
   every(ms: number, fn: () => void): () => void
   after(ms: number, fn: () => void): () => void
@@ -61,23 +73,42 @@ const DEFAULT_RETRY_MS = 2_000
 const MIN_RETRY_MS = 250
 /** `ioreg` is the costliest read per tick, so the GPU never polls faster than this. */
 export const GPU_MIN_MS = 4_000
-const SOURCES: readonly Source[] = ['cpu', 'gpu', 'memory', 'battery', 'clock', 'procs']
+/** The disk `ioreg` costs as much as the GPU's: Activity Monitor's own default rate. */
+export const DISK_MIN_MS = 5_000
+export const NETTOP_MS = 30_000
+export const SPACE_MS = 30_000
+/** A read more than this many intervals after the last one (sleep, a stall) starts a new baseline. */
+export const GAP_FACTOR = 3
+const DATA_VOLUME = '/System/Volumes/Data'
+/** The sources whose interval follows the refresh setting. */
+const REFRESHED: readonly Source[] = ['cpu', 'gpu', 'memory', 'disk', 'network']
+const SOURCES: readonly Source[] = ['cpu', 'gpu', 'memory', 'disk', 'network', 'space', 'battery', 'clock', 'procs', 'nettop']
 
 const COMMANDS = {
   gpu: ['ioreg', ['-r', '-d', '1', '-c', 'IOAccelerator']],
   vmStat: ['vm_stat', []],
   pressure: ['sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']],
   battery: ['pmset', ['-g', 'batt']],
-  procs: ['ps', ['-Aeo', 'pid=,pcpu=,rss=,comm=']]
+  procs: ['ps', ['-Aeo', 'pid=,pcpu=,rss=,comm=']],
+  disk: ['ioreg', ['-c', 'IOBlockStorageDriver', '-r', '-k', 'Statistics', '-d', '1']],
+  netstat: ['netstat', ['-ibn']],
+  nettop: ['nettop', ['-P', '-L', '1', '-x', '-t', 'external', '-J', 'bytes_in,bytes_out']]
 } as const satisfies Record<string, readonly [string, readonly string[]]>
 
 const SHOW_KEY: Record<ItemId, keyof Settings> = {
   cpu: 'showCpu',
   gpu: 'showGpu',
   memory: 'showMemory',
+  disk: 'showDisk',
+  network: 'showNetwork',
+  space: 'showDiskSpace',
   battery: 'showBattery',
   clock: 'showClock'
 }
+
+/** A speed source: the last read's counters, the last speeds and the past totals for the trend. */
+type SpeedState = { prev: { at: number; counters: Counters } | null; last: readonly [number, number] | null; history: number[] }
+const freshSpeed = (): SpeedState => ({ prev: null, last: null, history: [] })
 
 const same = (a: ItemState | undefined, b: ItemState) =>
   !!a && a.text === b.text && a.icon === b.icon && a.tone === b.tone && a.tooltip === b.tooltip && a.visible === b.visible
@@ -89,7 +120,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
 
   const latest = {} as Record<ItemId, ItemState>
   const lastSent: Partial<Record<ItemId, ItemState>> = {}
-  const fails: Record<Source, number> = { cpu: 0, gpu: 0, memory: 0, battery: 0, clock: 0, procs: 0 }
+  const fails: Record<Source, number> = { cpu: 0, gpu: 0, memory: 0, disk: 0, network: 0, space: 0, battery: 0, clock: 0, procs: 0, nettop: 0 }
   const timers = new Map<Source, () => void>()
   const inflight = new Set<Promise<unknown>>()
 
@@ -104,16 +135,28 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   let gpuHistory: number[] = []
   let topCpu: TopApp[] | null = null
   let topMemory: TopApp[] | null = null
+  let disk = freshSpeed()
+  let network = freshSpeed()
+  let diskTotals: { read: number; written: number } | null = null
+  /** Bytes per pid at the last `nettop` read; null until the first read. */
+  let nettopPrev: Map<number, number> | null = null
+  let topNetwork: TopApp[] | null = null
+  /** App names by pid from the last `ps` read, so network apps match the CPU hover's names. */
+  let psNames = new Map<number, string>()
+  let spaceLast: { total: number; available: number } | null = null
   let blockedUntil = 0
   let cancelRetry: (() => void) | null = null
   const busy = new Set<Source>()
   let sending: Promise<void> = Promise.resolve()
   let stopped = false
 
-  const available = (source: Source) => source === 'cpu' || source === 'clock' || mac
+  const available = (source: Source) => source === 'cpu' || source === 'clock' || source === 'space' || mac
   const shown = (id: ItemId, s: Settings = settings) => available(id) && (s[SHOW_KEY[id]] as boolean)
-  const enabled = (source: Source, s: Settings = settings) =>
-    source === 'procs' ? mac && (s.showCpu || s.showMemory) : shown(source, s)
+  const enabled = (source: Source, s: Settings = settings) => {
+    if (source === 'procs') return mac && (s.showCpu || s.showMemory || s.showNetwork)
+    if (source === 'nettop') return mac && s.showNetwork
+    return shown(source, s)
+  }
 
   function track<T>(p: Promise<T>): Promise<T> {
     inflight.add(p)
@@ -164,7 +207,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     return send()
   }
 
-  function fail(source: 'gpu' | 'memory' | 'battery', reason: string): void {
+  function fail(source: 'gpu' | 'memory' | 'disk' | 'network' | 'space' | 'battery', reason: string): void {
     fails[source] += 1
     if (fails[source] >= FAILS_BEFORE_DASH) set(source, dashItem(source, reason, styleOf(source)))
   }
@@ -192,16 +235,52 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     if (batteryLast && fails.battery < FAILS_BEFORE_DASH) set('battery', batteryItem(batteryLast, styleOf('battery')))
   }
 
+  function redrawDisk(): void {
+    if (disk.last && fails.disk < FAILS_BEFORE_DASH) {
+      set('disk', diskItem({ read: disk.last[0], write: disk.last[1] }, diskTotals, styleOf('disk'), disk.history))
+    }
+  }
+
+  function redrawNetwork(): void {
+    if (network.last && fails.network < FAILS_BEFORE_DASH) {
+      set('network', networkItem({ down: network.last[0], up: network.last[1] }, topNetwork, styleOf('network'), network.history))
+    }
+  }
+
+  function redrawSpace(): void {
+    if (spaceLast && fails.space < FAILS_BEFORE_DASH) set('space', diskSpaceItem(spaceLast, styleOf('space')))
+  }
+
   /** After a style change: the item from its last reading, or its dash or placeholder in the new style. */
   function restyle(id: StyledId): void {
     const dashed = id !== 'cpu' && fails[id] >= FAILS_BEFORE_DASH
-    const last = { cpu: cpuLast, gpu: gpuLast, memory: memoryLast, battery: batteryLast }[id]
+    const last = { cpu: cpuLast, gpu: gpuLast, memory: memoryLast, disk: disk.last, network: network.last, space: spaceLast, battery: batteryLast }[id]
     if (dashed) set(id, dashItem(id, latest[id].tooltip, styleOf(id)))
     else if (last === null) latest[id] = placeholder(id)
     else if (id === 'cpu') redrawCpu()
     else if (id === 'gpu') redrawGpu()
     else if (id === 'memory') redrawMemory()
+    else if (id === 'disk') redrawDisk()
+    else if (id === 'network') redrawNetwork()
+    else if (id === 'space') redrawSpace()
     else redrawBattery()
+  }
+
+  /**
+   * Takes a new read of a speed source. True when it gave new speeds; false for the first read, and
+   * for a read after no time or after a gap (sleep, a stall), which only becomes the new baseline.
+   */
+  function advance(state: SpeedState, counters: Counters, intervalMs: number): boolean {
+    const at = deps.monotonic()
+    const prev = state.prev
+    state.prev = { at, counters }
+    if (!prev) return false
+    const elapsed = at - prev.at
+    if (elapsed <= 0 || elapsed > GAP_FACTOR * intervalMs) return false
+    const speeds = perSecond(prev.counters, counters, elapsed / 1000)
+    state.last = speeds
+    state.history = remember(state.history, speeds[0] + speeds[1])
+    return true
   }
 
   function redrawMemory(): void {
@@ -256,6 +335,54 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         redrawBattery()
         return
       }
+      case 'disk': {
+        const out = await read('disk')
+        const counters = out === null ? null : parseDiskIo(out)
+        if (!counters) return fail('disk', 'ioreg failed')
+        fails.disk = 0
+        diskTotals = { read: 0, written: 0 }
+        for (const [read, written] of counters.values()) {
+          diskTotals.read += read
+          diskTotals.written += written
+        }
+        if (advance(disk, counters, intervalOf('disk'))) redrawDisk()
+        return
+      }
+      case 'network': {
+        const out = await read('netstat')
+        const counters = out === null ? null : parseNetstat(out)
+        if (!counters) return fail('network', 'netstat failed')
+        fails.network = 0
+        if (advance(network, counters, intervalOf('network'))) redrawNetwork()
+        return
+      }
+      case 'nettop': {
+        const out = await read('nettop')
+        if (out === null) {
+          fails.nettop += 1
+          if (fails.nettop < FAILS_BEFORE_DASH) return
+          topNetwork = null
+          nettopPrev = null
+        } else {
+          fails.nettop = 0
+          const rows = parseNettop(out)
+          if (nettopPrev) topNetwork = topTraffic(nettopPrev, rows, psNames)
+          nettopPrev = new Map()
+          for (const row of rows) nettopPrev.set(row.pid, (nettopPrev.get(row.pid) ?? 0) + row.bytes)
+        }
+        redrawNetwork()
+        return
+      }
+      case 'space': {
+        try {
+          spaceLast = await deps.statfs(mac ? DATA_VOLUME : '/')
+        } catch {
+          return fail('space', 'statfs failed')
+        }
+        fails.space = 0
+        redrawSpace()
+        return
+      }
       case 'clock':
         set('clock', clockItem(new Date(deps.now()), settings.clock24h))
         return
@@ -271,6 +398,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
           fails.procs = 0
           topCpu = topApps(rows, 'cpu', cores)
           topMemory = topApps(rows, 'memory', cores)
+          psNames = new Map(rows.map((row) => [row.pid, appName(row.path)]))
         }
         redrawCpu()
         redrawMemory()
@@ -279,30 +407,35 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     }
   }
 
-  /** The item's current percent, or null while it is hidden, unread or dashed. */
-  function valueOf(id: StyledId): number | null {
+  /** The item's text in a style from its last reading, or null while it is hidden, unread or dashed. */
+  function draw(id: StyledId, style: Style): string | null {
     if (!shown(id)) return null
-    if (id === 'cpu') return cpuLast
-    if (fails[id] >= FAILS_BEFORE_DASH) return null
-    if (id === 'gpu') return gpuLast?.utilization ?? null
-    if (id === 'memory') return memoryLast?.used.percent ?? null
-    return batteryLast?.present ? batteryLast.percent : null
+    if (id !== 'cpu' && fails[id] >= FAILS_BEFORE_DASH) return null
+    switch (id) {
+      case 'cpu':
+        return cpuLast === null ? null : styledText('cpu', style, cpuLast, cpuHistory)
+      case 'gpu':
+        return gpuLast ? styledText('gpu', style, gpuLast.utilization, gpuHistory) : null
+      case 'memory':
+        return memoryLast ? styledText('memory', style, memoryLast.used.percent, []) : null
+      case 'disk':
+        return disk.last ? pairText('disk', style, disk.last[0], disk.last[1], disk.history) : null
+      case 'network':
+        return network.last ? pairText('network', style, network.last[0], network.last[1], network.history) : null
+      case 'space':
+        return spaceLast ? styledText('space', style, spacePercent(spaceLast), []) : null
+      case 'battery':
+        return batteryLast?.present ? styledText('battery', style, batteryLast.percent, []) : null
+    }
   }
 
   function card(id: StyledId, hasBattery: boolean): Card {
-    const value = valueOf(id)
     const icon = id === 'battery' && batteryLast?.present ? batteryIcon(batteryLast.onPower) : ICON[id]
-    const history = id === 'cpu' ? cpuHistory : id === 'gpu' ? gpuHistory : []
     const samples =
       id === 'battery' && !hasBattery
         ? []
-        : STYLES[id].map((style) => ({
-            style,
-            label: STYLE_LABEL[style],
-            text: value === null ? dashText(id, style) : styledText(id, style, value, history),
-            icon
-          }))
-    return { id, shown: shown(id), value: value === null ? null : num(value), samples }
+        : STYLES[id].map((style) => ({ style, label: STYLE_LABEL[style], text: draw(id, style) ?? dashText(id, style), icon }))
+    return { id, shown: shown(id), value: draw(id, 'number'), samples }
   }
 
   function snapshot(): Snapshot {
@@ -362,7 +495,10 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   function intervalOf(source: Exclude<Source, 'clock'>): number {
     if (source === 'battery') return BATTERY_MS
     if (source === 'procs') return PROCS_MS
+    if (source === 'nettop') return NETTOP_MS
+    if (source === 'space') return SPACE_MS
     if (source === 'gpu') return Math.max(GPU_MIN_MS, settings.refreshSeconds * 1000)
+    if (source === 'disk') return Math.max(DISK_MIN_MS, settings.refreshSeconds * 1000)
     return settings.refreshSeconds * 1000
   }
 
@@ -403,6 +539,16 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
     }
     if (source === 'memory') memoryLast = null
     if (source === 'battery') batteryLast = null
+    if (source === 'disk') {
+      disk = freshSpeed()
+      diskTotals = null
+    }
+    if (source === 'network') network = freshSpeed()
+    if (source === 'nettop') {
+      nettopPrev = null
+      topNetwork = null
+    }
+    if (source === 'space') spaceLast = null
   }
 
   async function apply(next: Settings): Promise<void> {
@@ -416,11 +562,11 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
       if (was && !now) cancelTimer(source)
       if (!was && now) {
         reset(source)
-        if (source !== 'procs') latest[source] = placeholder(source)
+        if (source !== 'procs' && source !== 'nettop') latest[source] = placeholder(source)
         startTimer(source)
         ticks.push(tick(source))
       }
-      if (was && now && source !== 'clock' && source !== 'battery' && source !== 'procs' && before.refreshSeconds !== next.refreshSeconds) {
+      if (was && now && REFRESHED.includes(source) && before.refreshSeconds !== next.refreshSeconds) {
         startTimer(source)
       }
     }

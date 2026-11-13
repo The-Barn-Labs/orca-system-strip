@@ -26,9 +26,9 @@ panel together and each commit must typecheck.
 - Intervals: disk `max(5000, refresh)`; network every refresh; `nettop` 30 s; disk space 30 s and
   at once when switched on. `ps` also runs while Network is shown.
 - A hidden item runs none of its commands. `nettop` runs only while Network is shown.
-- Item order: `cpu, gpu, memory, disk, network, diskSpace, battery, clock` (manifest, `ITEM_IDS`,
+- Item order: `cpu, gpu, memory, disk, network, space, battery, clock` (manifest, `ITEM_IDS`,
   `STYLE_KEY`, panel cards).
-- Icons: disk `database`, network `globe`, diskSpace `folder`. Click opens Activity Monitor.
+- Icons: disk `database`, network `globe`, space `folder`. Click opens Activity Monitor.
 - Speed text: number and unit (`K`, `M`, `G`; 1 K = 1,000 bytes/s), padded to the width of three
   digits and one point with U+2007 (per missing digit) and U+2008 (when there is no point).
 - Log scale: `p = 20 × log10(bytesPerSecond ÷ 1000)`, clamped 0–100; then the existing `bar`,
@@ -164,17 +164,17 @@ and the tests `src/styles.unit.test.ts`, `src/settings.unit.test.ts`, `src/strip
 **Interfaces — produces:**
 ```ts
 // styles.ts
-export type StyledId = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'diskSpace' | 'battery'
+export type StyledId = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'space' | 'battery'
 export type PercentId = Exclude<StyledId, SpeedId>
-// STYLES: disk, network all five; diskSpace no trend. LABEL adds Disk, Net, Space (SPEED_LABEL reuses it).
+// STYLES: disk, network all five; space no trend. LABEL adds Disk, Net, Space (SPEED_LABEL reuses it).
 // ICON adds database, globe, folder. styledText takes PercentId.
 // settings.ts: showDisk, showNetwork, showDiskSpace (true); diskStyle, networkStyle, diskSpaceStyle ('number');
 //   STYLE_KEY keys in the global order.
 // format.ts
-export type ItemId = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'diskSpace' | 'battery' | 'clock'
+export type ItemId = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'space' | 'battery' | 'clock'
 export const ITEM_IDS: readonly ItemId[]   // global order
 // strip.ts
-export type Source = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'diskSpace' | 'battery' | 'clock' | 'procs' | 'nettop'
+export type Source = 'cpu' | 'gpu' | 'memory' | 'disk' | 'network' | 'space' | 'battery' | 'clock' | 'procs' | 'nettop'
 export type Deps = { /* existing */ statfs(path: string): Promise<{ total: number; available: number }>; monotonic(): number }
 export const DISK_MIN_MS = 5_000
 export const NETTOP_MS = 30_000
@@ -185,7 +185,7 @@ export const GAP_FACTOR = 3
 `monotonic` via `performance.now()`.
 
 - [ ] **Step 1: Update existing tests for the new shape** (they would otherwise fail on the type change, not on the feature):
-  - `styles.unit.test.ts`: the 64-character loop uses `pairText` for `SpeedId` and `styledText` otherwise; rename "only cpu and gpu offer trend" to say disk and network offer it too, and assert diskSpace does not.
+  - `styles.unit.test.ts`: the 64-character loop uses `pairText` for `SpeedId` and `styledText` otherwise; rename "only cpu and gpu offer trend" to say disk and network offer it too, and assert space does not.
   - `strip.worker.test.ts`: `WORDS` gains `diskStyle`, `networkStyle`, `diskSpaceStyle: 'words'`; `baseOutputs` gains the three commands; fake deps gain `statfs` (settable result per path, or an Error) and `mono`/`monotonic()`; the start-up test compares `slice(0, ITEM_IDS.length)`; the timer-list test expects the new timers; the card-ids test expects the global order.
   - `panel.test.tsx`: `ICON` and `snapshot()` gain the three cards; the no-battery test finds the battery card with `findIndex`.
 - [ ] **Step 2: New failing tests:**
@@ -194,7 +194,7 @@ export const GAP_FACTOR = 3
   - **Worker, first and second read:** with `diskStyle: 'number'`, one disk tick gives `–`. Then advance `mono` 5000 and swap in a fixture with +60 MB read and +10 MB written: the text becomes `pairText('disk','number',12e6,2e6,…)`.
   - **Worker, gaps:** a read `3 × 5000 + 1` ms after the last leaves the text unchanged, and the next normal read shows a fresh speed. The same holds with `mono` not advanced.
   - **Worker, counter going down:** one interface's bytes drop between reads; the speed counts only the others.
-  - **Worker, intervals:** at refresh 2, disk 5000, network 2000, `nettop` 30000, diskSpace 30000. At refresh 5, disk and network are both 5000.
+  - **Worker, intervals:** at refresh 2, disk 5000, network 2000, `nettop` 30000, space 30000. At refresh 5, disk and network are both 5000.
   - **Worker, hidden runs nothing:**
     - `showNetwork: false`: no `netstat` or `nettop` after ticking every source.
     - `showCpu: false, showMemory: false`: `ps` runs.
@@ -205,7 +205,7 @@ export const GAP_FACTOR = 3
     - `netstat` failing 3 times dashes Network.
     - Disk `ioreg` failing 3 times dashes Disk.
   - **Worker, switched back on:** hide Disk, then show it. Right after `settled()` it shows `–`, before advancing `mono`. Its trend history is empty.
-  - **Worker, diskSpace:**
+  - **Worker, space:**
     - Shows `69%`, `neutral`; at 90% used, `warning`.
     - On darwin it reads `/System/Volumes/Data`.
     - On `platform: 'linux'` it reads `/`, while disk and network stay hidden and never run.
@@ -215,18 +215,18 @@ export const GAP_FACTOR = 3
   - **Worker, snapshot:** card ids in the global order. The disk card's `value` is the number-style text, and its samples are `pairText` per style.
   - **Panel:**
     - Cards "Disk activity", "Network" and "Disk space" sit between Memory and Battery.
-    - The switches are labelled "Show disk activity", "Show network" and "Show disk space", with keys `disk-show`, `network-show`, `diskSpace-show`.
-    - Pressing `network-bar` writes `networkStyle: 'bar'`. There is no `diskSpace-trend`.
+    - The switches are labelled "Show disk activity", "Show network" and "Show disk space", with keys `disk-show`, `network-show`, `space-show`.
+    - Pressing `network-bar` writes `networkStyle: 'bar'`. There is no `space-trend`.
     - The refresh note reads "GPU updates no faster than every 4 seconds, disk activity every 5."
 - [ ] **Step 3: Run** `npm run test:unit; orca plugin test .`. Expected: the new tests FAIL. Updated old tests may fail too, until Step 4.
 - [ ] **Step 4: Implement.**
   - **Manifest:**
-    - Items `{"id":"disk","text":"–","icon":"database","tooltip":"System Strip","command":"system-strip.openActivityMonitor"}`, then `network` (`globe`) and `diskSpace` (`folder`), all after `memory`.
+    - Items `{"id":"disk","text":"–","icon":"database","tooltip":"System Strip","command":"system-strip.openActivityMonitor"}`, then `network` (`globe`) and `space` (`folder`), all after `memory`.
     - Settings "Show disk activity", "Show network", "Show disk space", "Disk activity style", "Network style" and "Disk space style", after the memory ones.
     - `refreshSeconds.description`: "How often CPU, memory and network update. The GPU updates no faster than every 4 seconds, disk activity every 5."
   - **Strip, speed state:** per speed source, keep the previous read as `{ at: monotonic, counters } | null`, plus the last speed and the history of totals. Disk also keeps its last totals for the hover.
   - **Strip, `nettop`:** keep the previous table as `Map<pid, bytes> | null`, and a `pid → appName` map refreshed on each `ps` tick.
-  - **Strip, `enabled`:** `procs` adds `s.showNetwork`. `nettop` is `mac && s.showNetwork`. `available` adds `diskSpace` on every platform.
+  - **Strip, `enabled`:** `procs` adds `s.showNetwork`. `nettop` is `mac && s.showNetwork`. `available` adds `space` on every platform.
   - **Strip, timers:** a refresh change restarts `cpu`, `gpu`, `memory`, `disk` and `network`.
   - **Strip, `reset`:** clears the previous read, the last speed, the history and the `nettop` table.
   - **Strip, `card` and `valueOf`:** one drawing function per item gives a card's value and samples. The `Card` shape stays.

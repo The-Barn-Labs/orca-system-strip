@@ -6,7 +6,7 @@ import { DEFAULTS } from './settings.ts'
 import { STYLES, STYLE_LABEL } from './styles.ts'
 import type { StyledId } from './styles.ts'
 
-const ICON = { cpu: 'activity', gpu: 'gauge', memory: 'layers', battery: 'zap' } as const
+const ICON = { cpu: 'activity', gpu: 'gauge', memory: 'layers', disk: 'database', network: 'globe', space: 'folder', battery: 'zap' } as const
 
 function cardOf(id: StyledId, value: string | null, text: (style: string) => string): Card {
   return {
@@ -29,6 +29,9 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
       cardOf('cpu', '34%', (s) => `cpu-${s}`),
       cardOf('gpu', '15%', (s) => `gpu-${s}`),
       cardOf('memory', '71%', (s) => `memory-${s}`),
+      cardOf('disk', 'R 12M W 85M', (s) => `disk-${s}`),
+      cardOf('network', '↓4.2M ↑310K', (s) => `network-${s}`),
+      cardOf('space', '69%', (s) => `space-${s}`),
       cardOf('battery', '87%', (s) => `battery-${s}`)
     ],
     clock: { h24: '14:05', h12: '2:05 PM' },
@@ -130,7 +133,7 @@ test('a failed first request shows waiting, then the posted snapshot', async () 
 
 test('without a battery the card says so', async () => {
   const snap = snapshot({ hasBattery: false })
-  snap.cards[3] = { id: 'battery', shown: false, value: null, samples: [] }
+  snap.cards[snap.cards.findIndex((c) => c.id === 'battery')] = { id: 'battery', shown: false, value: null, samples: [] }
   const { view } = await open(snap)
   assert.ok(view.find({ text: 'No battery on this Mac' }))
   assert.equal(view.find({ testId: 'battery-number' }), null)
@@ -158,5 +161,31 @@ test('an Activity Monitor request the worker never answers is caught and reporte
   const view = await mount(panel, { host })
   await view.press({ testId: 'activity-monitor' })
   assert.ok(view.find({ text: 'Could not reach System Strip' }))
+  await clean(view)
+})
+
+test('disk activity, network and disk space cards sit between Memory and Battery', async () => {
+  const { view } = await open()
+  for (const title of ['Disk activity', 'Network', 'Disk space']) assert.ok(view.find({ label: title }), title)
+  assert.equal(view.find({ label: 'Show disk activity' })?.key, 'disk-show')
+  assert.equal(view.find({ label: 'Show network' })?.key, 'network-show')
+  assert.equal(view.find({ label: 'Show disk space' })?.key, 'space-show')
+  assert.equal(view.find({ testId: 'space-trend' }), null)
+  assert.equal(view.find({ testId: 'network-trend' })?.text, 'network-trend')
+  await clean(view)
+})
+
+test('pressing a network sample writes networkStyle', async () => {
+  const { host, view } = await open()
+  await view.press({ testId: 'network-bar' })
+  assert.equal(host.data().settings.networkStyle, 'bar')
+  await view.toggle({ testId: 'space-show' })
+  assert.equal(host.data().settings.showDiskSpace, false)
+  await clean(view)
+})
+
+test('the refresh note names the GPU and disk limits', async () => {
+  const { view } = await open()
+  assert.ok(view.find({ text: 'GPU updates no faster than every 4 seconds, disk activity every 5.' }))
   await clean(view)
 })
