@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { STYLES, bar, dashText, level, num, styledText, trend } from './styles.ts'
-import type { StyledId } from './styles.ts'
+import { STYLES, bar, dashText, level, num, pairText, percentText, speed, speedPosition, styledText, trend } from './styles.ts'
+import type { SpeedId, Style, StyledId } from './styles.ts'
 
 const F = ' '
 
@@ -46,4 +46,39 @@ test('dashText', () => {
 test('only cpu and gpu offer trend', () => {
   assert.ok(STYLES.cpu.includes('trend') && STYLES.gpu.includes('trend'))
   assert.ok(!STYLES.memory.includes('trend') && !STYLES.battery.includes('trend'))
+})
+
+const P = ' '
+const s = speed
+
+test('speed picks the unit and keeps three digits and a point of width', () =>
+  assert.deepEqual(
+    [0, 960, 4_200_000, 12_000_000, 310_000, 9_970, 999_600, 1.5e9, 2e12, -5, NaN].map(speed),
+    [`${F}0.0K`, `${F}1.0K`, `${F}4.2M`, `${F}${P}12M`, `${P}310K`, `${F}${P}10K`, `${F}1.0M`, `${F}1.5G`, `${P}2000G`, `${F}0.0K`, `${F}0.0K`]
+  ))
+
+test('speedPosition is 20 per ×10 above 1 KB/s, clamped', () =>
+  assert.deepEqual([0, 1000, 10_000, 1e6, 1e8, 1e10, NaN].map(speedPosition), [0, 0, 20, 60, 100, 100, 0]))
+
+test('pairText per style', () => {
+  assert.equal(pairText('disk', 'number', 12e6, 85e6, []), `R ${s(12e6)} W ${s(85e6)}`)
+  assert.equal(pairText('network', 'number', 4.2e6, 310e3, []), `↓${s(4.2e6)} ↑${s(310e3)}`)
+  assert.equal(pairText('network', 'words', 4.2e6, 310e3, []), `Net ↓${s(4.2e6)} ↑${s(310e3)}`)
+  assert.equal(pairText('disk', 'words', 12e6, 85e6, []), `Disk R ${s(12e6)} W ${s(85e6)}`)
+  assert.equal(pairText('disk', 'bar', 12e6, 85e6, []), 'R ▰▰▰▰▱ W ▰▰▰▰▰')
+  assert.equal(pairText('network', 'bar', 4.2e6, 310e3, []), '↓▰▰▰▰▱ ↑▰▰▱▱▱')
+  assert.equal(pairText('disk', 'level', 12e6, 85e6, []), `▇R ${s(12e6)} █W ${s(85e6)}`)
+  assert.equal(pairText('network', 'level', 4.2e6, 310e3, []), `▆↓${s(4.2e6)} ▄↑${s(310e3)}`)
+  assert.equal(pairText('disk', 'trend', 12e6, 85e6, [97e6]), `${F.repeat(5)}█ R ${s(12e6)} W ${s(85e6)}`)
+})
+
+test('every pair text fits 64 characters', () => {
+  const styles: Style[] = ['words', 'number', 'bar', 'trend', 'level']
+  for (const id of ['disk', 'network'] as SpeedId[])
+    for (const style of styles) assert.ok(pairText(id, style, 2e12, 2e12, Array(20).fill(4e12)).length <= 64, `${id} ${style}`)
+})
+
+test('percentText draws a labelled percent like styledText', () => {
+  assert.equal(percentText('Space', 'words', 62, []), 'Space 62%')
+  assert.equal(styledText('cpu', 'words', 34, []), 'CPU 34%')
 })

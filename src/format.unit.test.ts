@@ -7,6 +7,12 @@ import {
   batteryTone,
   clockItem,
   cpuItem,
+  decimalBytes,
+  diskItem,
+  diskSpaceItem,
+  networkItem,
+  rateText,
+  spaceTone,
   dashItem,
   gb,
   gpuItem,
@@ -17,6 +23,7 @@ import {
 } from './format.ts'
 import type { BatteryReading } from './sources/battery.ts'
 import type { Pressure } from './sources/memory.ts'
+import { pairText } from './styles.ts'
 
 const F = '\u2007'
 const pick = (s: { text: string; icon?: string }) => [s.text, s.icon]
@@ -151,3 +158,46 @@ test('tooltips are cut to 256 characters', () => {
   const cpuTop = Array.from({ length: 3 }, (_, i) => ({ name: 'B'.repeat(120) + i, value: 9 }))
   assert.equal(cpuItem(1, 1, cpuTop, 'number', []).tooltip.length, 256)
 })
+
+test('decimalBytes uses powers of 1000', () =>
+  assert.deepEqual(
+    [0, 999, 1000, 310e3, 999_960, 12e6, 312e9, 5.1e12].map(decimalBytes),
+    ['0 B', '999 B', '1.0 KB', '310 KB', '1.0 MB', '12 MB', '312 GB', '5.1 TB']
+  ))
+
+test('rateText', () => assert.equal(rateText(4.2e6), '4.2 MB/s'))
+
+test('disk item: both speeds, totals on hover, never coloured', () =>
+  assert.deepEqual(diskItem({ read: 12e6, write: 85e6 }, { read: 5.1e12, written: 4.0e12 }, 'number', []), {
+    text: pairText('disk', 'number', 12e6, 85e6, []),
+    icon: 'database',
+    tone: 'neutral',
+    tooltip: 'Disk: reading 12 MB/s, writing 85 MB/s\nSince start-up: 5.1 TB read · 4.0 TB written',
+    visible: true
+  }))
+
+test('disk item without totals has one line', () =>
+  assert.equal(diskItem({ read: 0, write: 0 }, null, 'number', []).tooltip, 'Disk: reading 0 B/s, writing 0 B/s'))
+
+test('network item: speeds and top apps on open connections', () => {
+  const item = networkItem({ down: 4.2e6, up: 310e3 }, [{ name: 'Chrome', value: 12e6 }], 'number', [])
+  assert.deepEqual(pick(item), [pairText('network', 'number', 4.2e6, 310e3, []), 'globe'])
+  assert.equal(item.tone, 'neutral')
+  assert.equal(item.tooltip, 'Network: down 4.2 MB/s, up 310 KB/s\nTop apps, open connections, last 30 s: Chrome 12 MB')
+  assert.equal(networkItem({ down: 1, up: 1 }, null, 'number', []).tooltip, 'Network: down 1 B/s, up 1 B/s')
+  assert.equal(networkItem({ down: 1, up: 1 }, [], 'number', []).tooltip, 'Network: down 1 B/s, up 1 B/s')
+})
+
+test('network tooltip with long names stays within 256', () => {
+  const top = ['a', 'b', 'c'].map((c) => ({ name: c.repeat(200), value: 1e6 }))
+  assert.ok(networkItem({ down: 1, up: 1 }, top, 'number', []).tooltip.length <= 256)
+})
+
+test('disk space item', () => {
+  const space = { total: 994e9, available: 312e9 }
+  assert.deepEqual(diskSpaceItem(space, 'number'), { text: '69%', icon: 'folder', tone: 'neutral', tooltip: '312 GB free of 994 GB', visible: true })
+  assert.equal(diskSpaceItem(space, 'words').text, 'Space 69%')
+  assert.equal(diskSpaceItem(space, 'trend').text, '69%')
+})
+
+test('spaceTone edges', () => assert.deepEqual([89.9, 90, 94.9, 95].map(spaceTone), ['neutral', 'warning', 'warning', 'danger']))

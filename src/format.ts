@@ -2,7 +2,7 @@ import type { BatteryReading } from './sources/battery.ts'
 import type { GpuReading } from './sources/gpu.ts'
 import type { Pressure } from './sources/memory.ts'
 import type { TopApp } from './sources/processes.ts'
-import { ICON, batteryIcon, dashText, styledText } from './styles.ts'
+import { ICON, batteryIcon, dashText, pairText, percentText, styledText } from './styles.ts'
 import type { IconName, Style } from './styles.ts'
 
 export type ItemId = 'cpu' | 'gpu' | 'memory' | 'battery' | 'clock'
@@ -122,4 +122,51 @@ export function clockItem(now: Date, h24: boolean): ItemState {
 export function dashItem(id: ItemId, reason: string, style: Style): ItemState {
   const p = placeholderItem(id, style)
   return shown(p.text, p.icon, 'neutral', reason)
+}
+
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const
+
+/** Bytes in powers of 1000, as macOS shows them: '0 B', '310 KB', '5.1 TB'. */
+export function decimalBytes(n: number): string {
+  let value = Number.isFinite(n) && n > 0 ? n : 0
+  let unit = 0
+  while (value >= 1000 && unit < BYTE_UNITS.length - 1) {
+    value /= 1000
+    unit += 1
+  }
+  const draw = (v: number) => (unit === 0 || v >= 10 ? String(Math.round(v)) : v.toFixed(1) === '10.0' ? '10' : v.toFixed(1))
+  let text = draw(value)
+  if (text === '1000' && unit < BYTE_UNITS.length - 1) {
+    value /= 1000
+    unit += 1
+    text = draw(value)
+  }
+  return `${text} ${BYTE_UNITS[unit]}`
+}
+
+export const rateText = (bytesPerSecond: number) => decimalBytes(bytesPerSecond) + '/s'
+
+export function spaceTone(percentUsed: number): Tone {
+  if (percentUsed >= 95) return 'danger'
+  if (percentUsed >= 90) return 'warning'
+  return 'neutral'
+}
+
+/** Speeds never colour the bar: there is no "too fast". */
+export function diskItem(speed: { read: number; write: number }, totals: { read: number; written: number } | null, style: Style, history: readonly number[]): ItemState {
+  const lines = [`Disk: reading ${rateText(speed.read)}, writing ${rateText(speed.write)}`]
+  if (totals) lines.push(`Since start-up: ${decimalBytes(totals.read)} read · ${decimalBytes(totals.written)} written`)
+  return shown(pairText('disk', style, speed.read, speed.write, history), 'database', 'neutral', lines.join('\n'))
+}
+
+export function networkItem(speed: { down: number; up: number }, top: TopApp[] | null, style: Style, history: readonly number[]): ItemState {
+  const lines = [`Network: down ${rateText(speed.down)}, up ${rateText(speed.up)}`]
+  if (top && top.length) lines.push('Top apps, open connections, last 30 s: ' + top.map((a) => `${a.name} ${decimalBytes(a.value)}`).join(' · '))
+  return shown(pairText('network', style, speed.down, speed.up, history), 'globe', 'neutral', lines.join('\n'))
+}
+
+export function diskSpaceItem(space: { total: number; available: number }, style: Style): ItemState {
+  const percent = space.total > 0 ? ((space.total - space.available) / space.total) * 100 : 0
+  const text = percentText('Space', style === 'trend' ? 'number' : style, percent, [])
+  return shown(text, 'folder', spaceTone(percent), `${decimalBytes(space.available)} free of ${decimalBytes(space.total)}`)
 }
