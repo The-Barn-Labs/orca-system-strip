@@ -43,8 +43,8 @@ speed, download and upload speed), plus how full the drive is.
 
 | Item | Source | How often | Notes |
 |---|---|---|---|
-| Disk activity | `ioreg -c IOBlockStorageDriver -r -k Statistics -d 1` → `"Bytes (Read)"` and `"Bytes (Write)"` | every refresh | Counters since start-up, one per disk driver; add them all up (Activity Monitor counts every disk). Took 0.03 s. |
-| Network | `netstat -ibn` → `Ibytes`, `Obytes` on the `<Link#…>` rows | every refresh | Counters since start-up per interface. Add up all interfaces **except** loopback (`lo*`) and tunnels (`utun*`, `ipsec*`, `gif*`, `stf*`), whose traffic also crosses a real interface and would count twice. *(My call.)* Took under 0.01 s. |
+| Disk activity | `ioreg -c IOBlockStorageDriver -r -k Statistics -d 1` → `"Bytes (Read)"` and `"Bytes (Write)"` | every refresh, but no faster than every 4 s | Counters since start-up, one per disk driver; add them all up (Activity Monitor counts every disk). Costs about 11 ms of CPU per run, the same as the GPU's `ioreg`, so it follows the GPU's limit: every 1 s would be about 1.1% of a core on its own, over design.md's "under 1% of one core" target. *(My call; the speed is still exact, since it divides by the real time between reads.)* |
+| Network | `netstat -ibn` → `Ibytes`, `Obytes` on the `<Link#…>` rows | every refresh (about 1 ms of CPU per run) | Counters since start-up per interface. Add up all interfaces **except** loopback (`lo*`) and tunnels (`utun*`, `ipsec*`, `gif*`, `stf*`), whose traffic also crosses a real interface and would count twice. *(My call.)* Took under 0.01 s. |
 | Network top apps | `nettop -P -L 1 -x -J bytes_in,bytes_out` | every 15 s, only while Network is shown | Counters per process, named `name.pid`. Took 5 s wall time but almost no CPU (it waits for one sample), so it must run without blocking other reads. |
 | Disk space | Node's `fs.statfs` on `/System/Volumes/Data` (or `/` where that does not exist) | every 30 s, and at once when switched on | No command. Used = (total − available) ÷ total. On the user's Mac: 36%. |
 
@@ -89,7 +89,16 @@ A speed is written in at most 4 characters: a number and one unit letter, `K`
 - Take the largest unit the value reaches, with `K` as the smallest. Below 10 of that unit: one
   decimal (`4.2M`, `0.0K`). From 10: no decimal (`12M`, `310K`). If rounding reaches 1000, use the
   next unit (`999.6K` → `1.0M`).
-- Pad on the left with figure spaces to 4 characters, so `12M` and `4.2M` take the same width.
+- Pad on the left so every number takes the width of three digits and one decimal point: a figure
+  space (U+2007) stands in for a missing digit and a punctuation space (U+2008) for a missing
+  point. So `4.2M` gets one figure space in front, `12M` gets a figure space and a punctuation
+  space, and `310K` gets one punctuation space: all the same width when digits are equally wide.
+  *(My call, from the builder check: plain figure-space padding would leave `4.2M` narrower than
+  `12M`, since a point is narrower than a digit.)*
+- **Width that still moves, accepted** like the `100%` exception: the unit letter changing (`K`,
+  `M`, `G` differ in width), and digits of unequal width if the status bar font does not use
+  tabular digits. Check 2 records how it looks; it does not block the release. *(My call: the
+  user chose layout A's look, and fixing these would change it.)*
 - In hover text, units are written out: `12 MB/s`.
 
 ## Styles
@@ -113,7 +122,7 @@ rule with the bar's existing rounding, so 97 MB/s fills all five cells.)*
 | Level, `level` | `▇R 12M █W 85M` | `▆↓4.2M ▄↑310K` | `▅62%` |
 
 - **Trend** for disk and network draws the **total** (read + write, down + up), one reading per
-  refresh, the last 6, with the same padding rule as CPU's.
+  read (disk at most every 4 s, network every refresh), the last 6, with the same padding rule as CPU's.
 - **Labels in words style:** `Disk`, `Net`, `Space`. *(My call: `Space` keeps disk space apart
   from disk activity.)*
 - **Defaults:** `number`, like the other items.
@@ -137,13 +146,19 @@ All three are **on by default**. The user said they will switch off what they do
 
 Three more cards, after Memory and before Battery, built like the existing ones: a Show switch, the
 current value, one sample per style with live numbers, the selected one highlighted. "Your bar
-now" includes them.
+now" includes them. The note under the refresh choice becomes "GPU and disk activity update no
+faster than every 4 seconds."; the README's refresh row says the same.
 
 ## Checks before it ships
 
 1. **Icons:** `database`, `globe` and `folder` render in the real status bar (they are in Orca's
    `IconName` set; check the status bar draws them, not the fallback glyph).
-2. **Width:** within one style, changing speeds do not shift the items to their right.
+2. **Width (recorded, not a gate):** within one style, look at how much changing speeds shift
+   the items to their right, and note it in the PR. Only the movements listed under "Speed
+   numbers" are expected.
+7. **Overhead:** with every item on and refresh at 1 s, the worker and its commands stay under
+   1% of one core on average (measure CPU time, not wall time). If not, the next lever is
+   network's interval, not dropping an item.
 3. **Tooltip length:** network's hover with three long app names stays ≤ 256 characters.
 4. **Numbers against Activity Monitor:** with a big copy running, disk and network speeds are in
    the same range as Activity Monitor's Disk and Network tabs.
