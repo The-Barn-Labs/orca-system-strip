@@ -189,3 +189,32 @@ test('the refresh note names the GPU and disk limits', async () => {
   assert.ok(view.find({ text: 'GPU updates no faster than every 4 seconds, disk activity every 5.' }))
   await clean(view)
 })
+
+test('a failed first request is retried, so a slow start still fills the panel', async () => {
+  let calls = 0
+  const { view } = await open(() => {
+    calls += 1
+    if (calls === 1) throw hostError('timeout', 'worker is slow')
+    return snapshot()
+  })
+  await view.settled()
+  assert.ok(view.find({ testId: 'cpu-number' }))
+  await clean(view)
+})
+
+test('when the retries run out, Try again asks once more (nothing else may post, e.g. every item hidden)', async () => {
+  let calls = 0
+  let down = true
+  const { view } = await open(() => {
+    calls += 1
+    if (down) throw hostError('timeout', 'worker is slow')
+    return snapshot()
+  })
+  await view.settled()
+  assert.ok(view.find({ text: 'Waiting for System Strip…' }))
+  assert.equal(calls, 3, 'the first request and two retries')
+  down = false
+  await view.press({ testId: 'retry' })
+  assert.ok(view.find({ testId: 'cpu-number' }))
+  await clean(view)
+})

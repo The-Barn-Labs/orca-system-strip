@@ -776,3 +776,67 @@ test('the disk card shows the number form and a sample per style', async () => {
   )
   await worker.deactivate()
 })
+
+test('after a dash, a read that only restarts the count clears the old speed from the card too', async () => {
+  const { deps, last, strip, worker } = await mount({ settings: { diskStyle: 'number' } })
+  deps.outputs[DISK] = diskOut(1000 + 60e6, 1000 + 10e6)
+  deps.mono += 5000
+  await strip.tick('disk')
+  deps.outputs[DISK] = new Error('ioreg broke')
+  for (let i = 0; i < FAILS_BEFORE_DASH; i++) {
+    deps.mono += 5000
+    await strip.tick('disk')
+  }
+  assert.equal(last('disk')!.text, '–')
+  deps.outputs[DISK] = diskOut(2e9, 2e9)
+  deps.mono += 5000
+  await strip.tick('disk')
+  assert.equal(card(await snapshotOf(worker), 'disk').value, null, 'no stale speed while the bar has no reading')
+  deps.outputs[DISK] = diskOut(2e9 + 5e6, 2e9)
+  deps.mono += 5000
+  await strip.tick('disk')
+  assert.equal(last('disk')!.text, pairText('disk', 'number', 1e6, 0, []))
+  await worker.deactivate()
+})
+
+test('a disk read still running when Disk is switched off and on is thrown away', async () => {
+  const { api, deps, last, strip, worker } = await mount({ settings: { diskStyle: 'number' } })
+  let release: (out: string) => void = () => undefined
+  deps.hold[DISK] = new Promise<string>((resolve) => {
+    release = resolve
+  })
+  const stale = strip.tick('disk')
+  // settled() would wait for the held read, so let the two settings changes run by turns instead.
+  const turns = async () => {
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  await api.settings.set('showDisk', false)
+  await turns()
+  await api.settings.set('showDisk', true)
+  await turns()
+  delete deps.hold[DISK]
+  release(diskOut(1000, 1000))
+  await stale
+  await strip.settled()
+  deps.outputs[DISK] = diskOut(1000 + 60e6, 1000 + 10e6)
+  deps.mono += 5000
+  await strip.tick('disk')
+  assert.equal(last('disk')!.text, '–', 'the first read after switching on is the baseline, not the stale one')
+  await worker.deactivate()
+})
+
+test('per-app traffic after a missed nettop read starts a new baseline instead of a long total', async () => {
+  const deps = fakeDeps({ ...baseOutputs(), [NETTOP]: 'node.101,1000,0,\n' })
+  const { last, strip, worker } = await mount({ deps })
+  deps.mono += 2000
+  await strip.tick('network')
+  deps.outputs[NETTOP] = 'node.101,90000,0,\n'
+  deps.mono += 2 * NETTOP_MS
+  await strip.tick('nettop')
+  assert.equal(last('network')!.tooltip.includes('Top apps'), false, 'a baseline older than one interval is not reported')
+  deps.outputs[NETTOP] = 'node.101,93000,0,\n'
+  deps.mono += NETTOP_MS
+  await strip.tick('nettop')
+  assert.equal(last('network')!.tooltip.split('\n')[1], 'Top apps, open connections, last 30 s: Google Chrome 3.0 KB')
+  await worker.deactivate()
+})

@@ -40,6 +40,11 @@ function openActivityMonitor(): void {
   )
 }
 
+/** Retries after the first request; each request waits out Orca's own timeout first. */
+const RETRIES = 2
+/** Asks the worker for a snapshot again; set by `setup`. */
+let askAgain: () => void = () => undefined
+
 export function setup(ctx: PanelContext): void {
   let posted = false
   ctx.subscriptions.push(
@@ -48,13 +53,22 @@ export function setup(ctx: PanelContext): void {
       set(snap, payload)
     })
   )
-  plugin.request('strip.snapshot').then(
-    (answer) => {
-      // A post that arrived first is newer than this answer.
-      if (!posted) set(snap, answer)
-    },
-    () => set(failed, true)
-  )
+  // The worker posts only when something changes, so with every item hidden a failed request
+  // would leave the panel waiting: retry a little, then offer Try again.
+  const ask = (retriesLeft: number): void => {
+    plugin.request('strip.snapshot').then(
+      (answer) => {
+        // A post that arrived first is newer than this answer.
+        if (!posted) set(snap, answer)
+      },
+      () => (retriesLeft > 0 ? ask(retriesLeft - 1) : set(failed, true))
+    )
+  }
+  askAgain = () => {
+    set(failed, false)
+    ask(0)
+  }
+  ask(RETRIES)
 }
 
 function ItemCard({ card, data }: { card: CardData; data: Snapshot }) {
@@ -112,6 +126,11 @@ export default function Panel() {
         <Text muted size="sm">
           {read(failed) ? 'Waiting for System Strip…' : 'Loading…'}
         </Text>
+        {read(failed) ? (
+          <Button key="retry" size="sm" variant="outline" icon="refresh" onPress={() => askAgain()}>
+            Try again
+          </Button>
+        ) : null}
       </Stack>
     )
   }

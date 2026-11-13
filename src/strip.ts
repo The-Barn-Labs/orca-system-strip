@@ -76,6 +76,8 @@ export const GPU_MIN_MS = 4_000
 /** The disk `ioreg` costs as much as the GPU's: Activity Monitor's own default rate. */
 export const DISK_MIN_MS = 5_000
 export const NETTOP_MS = 30_000
+/** A `nettop` baseline older than this (a missed read, sleep) is not compared against. */
+const NETTOP_STALE_MS = NETTOP_MS * 1.5
 export const SPACE_MS = 30_000
 /** A read more than this many intervals after the last one (sleep, a stall) starts a new baseline. */
 export const GAP_FACTOR = 3
@@ -138,8 +140,11 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
   let disk = freshSpeed()
   let network = freshSpeed()
   let diskTotals: { read: number; written: number } | null = null
-  /** Bytes per pid at the last `nettop` read; null until the first read. */
+  /** Bytes per pid at the last `nettop` read, and when it was taken; null until the first read. */
   let nettopPrev: Map<number, number> | null = null
+  let nettopAt = 0
+  /** Bumped when a source is switched back on, so a read started before that is thrown away. */
+  const generation: Record<Source, number> = { cpu: 0, gpu: 0, memory: 0, disk: 0, network: 0, space: 0, battery: 0, clock: 0, procs: 0, nettop: 0 }
   let topNetwork: TopApp[] | null = null
   /** App names by pid from the last `ps` read, so network apps match the CPU hover's names. */
   let psNames = new Map<number, string>()
@@ -336,9 +341,12 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         return
       }
       case 'disk': {
+        const started = generation.disk
         const out = await read('disk')
+        if (started !== generation.disk) return
         const counters = out === null ? null : parseDiskIo(out)
         if (!counters) return fail('disk', 'ioreg failed')
+        const dashed = fails.disk >= FAILS_BEFORE_DASH
         fails.disk = 0
         diskTotals = { read: 0, written: 0 }
         for (const [read, written] of counters.values()) {
@@ -346,18 +354,26 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
           diskTotals.written += written
         }
         if (advance(disk, counters, intervalOf('disk'))) redrawDisk()
+        // After a dash the bar has no reading; the card must not show the speed from before it.
+        else if (dashed) disk.last = null
         return
       }
       case 'network': {
+        const started = generation.network
         const out = await read('netstat')
+        if (started !== generation.network) return
         const counters = out === null ? null : parseNetstat(out)
         if (!counters) return fail('network', 'netstat failed')
+        const dashed = fails.network >= FAILS_BEFORE_DASH
         fails.network = 0
         if (advance(network, counters, intervalOf('network'))) redrawNetwork()
+        else if (dashed) network.last = null
         return
       }
       case 'nettop': {
+        const started = generation.nettop
         const out = await read('nettop')
+        if (started !== generation.nettop) return
         if (out === null) {
           fails.nettop += 1
           if (fails.nettop < FAILS_BEFORE_DASH) return
@@ -366,8 +382,12 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
         } else {
           fails.nettop = 0
           const rows = parseNettop(out)
-          if (nettopPrev) topNetwork = topTraffic(nettopPrev, rows, psNames)
+          const at = deps.monotonic()
+          // A baseline from before a missed read or sleep would report minutes of traffic as 30 s.
+          if (nettopPrev && at - nettopAt > NETTOP_STALE_MS) topNetwork = null
+          else if (nettopPrev) topNetwork = topTraffic(nettopPrev, rows, psNames)
           nettopPrev = new Map()
+          nettopAt = at
           for (const row of rows) nettopPrev.set(row.pid, (nettopPrev.get(row.pid) ?? 0) + row.bytes)
         }
         redrawNetwork()
@@ -526,6 +546,7 @@ export async function startStrip(orca: OrcaWorkerApi, deps: Deps): Promise<Strip
 
   function reset(source: Source): void {
     fails[source] = 0
+    generation[source] += 1
     if (source === 'cpu') {
       cpuPrev = null
       cpuLast = null
