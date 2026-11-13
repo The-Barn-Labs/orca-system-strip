@@ -10,7 +10,7 @@ Each item is an icon and its value, drawn in the style you pick:
 | Words and number | `CPU 34%` |
 | Icon and number (default) | `34%` |
 | Bar | `▰▰▱▱▱` (five steps of 20%, no number) |
-| Trend and number | `▂▃▇▇▅▃ 34%` (the last six readings; CPU and GPU only) |
+| Trend and number | `▂▃▇▇▅▃ 34%` (the last six readings; CPU, GPU, disk activity and network only) |
 | Level and number | `▃34%` |
 
 Disk activity and network show both directions, read and write (`R 12M W 85M`) or down and up
@@ -62,7 +62,8 @@ read-only macOS commands:
 | `nettop -P -L 1 -x -t external -J bytes_in,bytes_out` | Top apps by network traffic | every 30 s |
 | `open -a "Activity Monitor"` | Opening Activity Monitor | only when you click |
 
-CPU comes from Node's own `os.cpus()` and disk space from Node's `fs.statfs`, with no command. A switched-off item stops its command.
+CPU comes from Node's own `os.cpus()` and disk space from Node's `fs.statfs`, with no command. A switched-off item stops its command
+(`ps` keeps running while Network is shown, to name its apps).
 System Strip makes no network connections (network speed comes from the Mac's own counters),
 collects nothing about you and stores nothing.
 
@@ -97,11 +98,10 @@ or the bar shows every item twice.
 ## Limits
 
 - GPU, memory, disk activity, network and battery work on macOS only; on other systems CPU, disk
-  space and the clock still show.
+  space and the clock still show. Tested on Apple Silicon.
 - Disk activity has no per-app list: macOS gives it only to tools run with `sudo`.
 - The network apps list covers open connections only: a connection that opens and closes between
   two reads (30 s apart) is not counted for its app, though it still counts in the speed.
-  Tested on Apple Silicon.
 - Fan speed and temperature are not shown: macOS only gives them to tools run with `sudo`.
 
 ## Develop

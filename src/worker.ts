@@ -1,4 +1,4 @@
-// System Strip: CPU, GPU, memory, battery and a clock in Orca's status bar.
+// System Strip: CPU, GPU, memory, disk, network, battery and a clock in Orca's status bar.
 // Orca transpiles this file when it loads: no build step.
 import { execFile } from 'node:child_process'
 import { statfs } from 'node:fs/promises'
